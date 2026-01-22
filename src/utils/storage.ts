@@ -203,17 +203,29 @@ export async function getCurrentAuthAccountId(): Promise<string | null> {
 /**
  * 同步当前登录账号状态
  * 读取 .codex/auth.json 并与系统中的账号比对，更新 isActive 状态
+ * 如果 auth.json 不存在，则清除所有账号的 isActive 状态
  */
 export async function syncCurrentAccount(): Promise<string | null> {
   const currentAccountId = await getCurrentAuthAccountId();
-  
-  if (!currentAccountId) {
-    return null;
-  }
-  
   const store = await loadAccountsStore();
   let matchedId: string | null = null;
   let needsSave = false;
+  
+  // 如果 auth.json 不存在或无法获取账号ID，清除所有账号的激活状态
+  if (!currentAccountId) {
+    store.accounts.forEach((acc) => {
+      if (acc.isActive) {
+        acc.isActive = false;
+        needsSave = true;
+      }
+    });
+    
+    if (needsSave) {
+      await saveAccountsStore(store);
+    }
+    
+    return null;
+  }
   
   // 遍历所有账号，找到匹配的并更新 isActive
   store.accounts.forEach((acc) => {

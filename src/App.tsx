@@ -39,12 +39,10 @@ function App() {
     accountName: '',
   });
 
-  // 初始化加载账号
   useEffect(() => {
     loadAccounts();
   }, [loadAccounts]);
 
-  // 错误提示自动消失
   useEffect(() => {
     if (error) {
       const timer = setTimeout(clearError, 5000);
@@ -76,7 +74,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen pb-16 page-enter">
+    <div className="min-h-screen pb-12 page-enter">
       <Header
         accountCount={accounts.length}
         onAddAccount={() => setShowAddModal(true)}
@@ -85,18 +83,18 @@ function App() {
         isLoading={isLoading}
       />
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="max-w-7xl mx-auto px-5 py-6">
         {/* 错误提示 */}
         {error && (
-          <div className="mb-6 p-4 bg-red-900/30 border border-red-700 rounded-xl text-red-400 flex items-center justify-between animate-fade-in">
-            <div className="flex items-center gap-3">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="mb-4 p-3 bg-red-600/10 border border-red-600/30 rounded text-red-400 text-sm flex items-center justify-between animate-fade-in">
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <span>{error}</span>
             </div>
-            <button onClick={clearError} className="text-red-400 hover:text-red-300">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <button onClick={clearError} className="text-red-400 hover:text-red-300 p-1">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
@@ -106,12 +104,12 @@ function App() {
         {/* 加载状态 */}
         {isLoading && accounts.length === 0 && (
           <div className="flex items-center justify-center py-20">
-            <div className="flex items-center gap-3 text-stone-400">
-              <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
+            <div className="flex items-center gap-2 text-[#808080]">
+              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
-              <span>加载中...</span>
+              <span className="text-sm">加载中...</span>
             </div>
           </div>
         )}
@@ -126,12 +124,12 @@ function App() {
           <>
             <StatsSummary accounts={accounts} />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {accounts.map((account, index) => (
                 <div
                   key={account.id}
                   className="animate-fade-in"
-                  style={{ animationDelay: `${index * 100}ms` }}
+                  style={{ animationDelay: `${index * 50}ms` }}
                 >
                   <AccountCard
                     account={account}
@@ -139,9 +137,9 @@ function App() {
                     onDelete={() => handleDeleteClick(account.id, account.alias)}
                     onRefresh={() => handleRefresh(account.id)}
                   />
-      </div>
+                </div>
               ))}
-      </div>
+            </div>
           </>
         )}
       </main>
@@ -173,11 +171,11 @@ function App() {
         onCancel={() => setDeleteConfirm({ isOpen: false, accountId: null, accountName: '' })}
       />
 
-      {/* 底部信息 */}
-      <footer className="fixed bottom-0 left-0 right-0 bg-stone-900/80 backdrop-blur-lg border-t border-stone-800 py-3 px-6">
-        <div className="max-w-7xl mx-auto flex items-center justify-between text-sm text-stone-500">
+      {/* 底部状态栏 */}
+      <footer className="fixed bottom-0 left-0 right-0 bg-[#1F1F1F] border-t border-[#404040] py-2 px-5">
+        <div className="max-w-7xl mx-auto flex items-center justify-between text-xs text-[#606060]">
           <span>Codex Manager v0.1.0</span>
-          <span>数据存储于本地，安全私密</span>
+          <span>数据存储于本地</span>
         </div>
       </footer>
     </div>

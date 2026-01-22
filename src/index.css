@@ -1,18 +1,32 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
-/* 自定义CSS变量 */
+/* Windows 11 风格 CSS 变量 */
 :root {
-  --color-primary: #f59e0b;
-  --color-primary-hover: #f97316;
-  --color-success: #22c55e;
-  --color-warning: #fbbf24;
-  --color-danger: #ef4444;
-  --color-bg-dark: #0f0d0a;
-  --color-bg-card: #1a1712;
-  --color-text-primary: #f5f3ee;
-  --color-text-secondary: #b8b1a5;
-  --color-border: #2b251e;
+  /* 背景色 */
+  --win-bg-solid: #1F1F1F;
+  --win-bg-card: #2D2D2D;
+  --win-bg-card-hover: #333333;
+  --win-bg-elevated: #3D3D3D;
+  
+  /* 边框色 */
+  --win-border: #404040;
+  --win-border-light: #4D4D4D;
+  
+  /* 文字色 */
+  --win-text-primary: #FFFFFF;
+  --win-text-secondary: #B3B3B3;
+  --win-text-tertiary: #808080;
+  
+  /* 主题色 - 使用绿色系 */
+  --win-accent: #10B981;
+  --win-accent-hover: #059669;
+  --win-accent-light: rgba(16, 185, 129, 0.15);
+  
+  /* 状态色 */
+  --win-success: #10B981;
+  --win-warning: #F59E0B;
+  --win-danger: #EF4444;
+  --win-info: #60A5FA;
 }
 
 /* 全局样式 */
@@ -23,70 +37,75 @@ html {
 
 body {
   margin: 0;
-  font-family: "Space Grotesk", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-  background-color: var(--color-bg-dark);
-  background-image:
-    radial-gradient(1200px circle at 12% -10%, rgba(245, 158, 11, 0.18), transparent 55%),
-    radial-gradient(900px circle at 80% 15%, rgba(34, 197, 94, 0.16), transparent 52%),
-    radial-gradient(700px circle at 90% 110%, rgba(239, 68, 68, 0.12), transparent 55%),
-    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0 2px, transparent 2px 6px),
-    linear-gradient(135deg, #0f0d0a 0%, #14110d 45%, #1b1812 100%);
-  color: var(--color-text-primary);
+  font-family: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, "Microsoft YaHei", sans-serif;
+  background-color: var(--win-bg-solid);
+  color: var(--win-text-primary);
   min-height: 100vh;
-  background-attachment: fixed;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1,
-h2,
-h3,
-.font-display {
-  font-family: "Fraunces", "Space Grotesk", serif;
-  letter-spacing: 0.2px;
-}
-
-/* 自定义滚动条 */
+/* Windows 风格滚动条 */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 12px;
+  height: 12px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg-dark);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 4px;
+  background: #5A5A5A;
+  border-radius: 6px;
+  border: 3px solid var(--win-bg-solid);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4b453c;
+  background: #6B6B6B;
 }
 
-/* 动画 */
+/* 简洁的动画 */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(12px); }
+  from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 6px rgba(245, 158, 11, 0.45); }
-  50% { box-shadow: 0 0 18px rgba(245, 158, 11, 0.75); }
-}
-
-@keyframes pageEnter {
-  from { opacity: 0; transform: translateY(10px) scale(0.99); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+@keyframes slideIn {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.45s ease-out forwards;
-}
-
-.animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
+  animation: fadeIn 0.2s ease-out forwards;
 }
 
 .page-enter {
-  animation: pageEnter 0.6s ease-out both;
+  animation: slideIn 0.15s ease-out both;
+}
+
+/* Windows 风格输入框 */
+input, textarea, select {
+  font-family: inherit;
+}
+
+/* Windows 风格按钮悬停效果 */
+.win-button {
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+
+/* 卡片悬停效果 */
+.win-card {
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.win-card:hover {
+  border-color: var(--win-border-light);
+}
+
+/* 亚克力效果模拟 */
+.win-acrylic {
+  background-color: rgba(45, 45, 45, 0.85);
+  backdrop-filter: blur(20px) saturate(125%);
 }

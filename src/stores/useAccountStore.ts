@@ -67,19 +67,17 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     try {
       const matchedId = await syncCurrent();
       
-      if (matchedId) {
-        // 更新本地状态
-        const { accounts } = get();
-        const updatedAccounts = accounts.map(a => ({
-          ...a,
-          isActive: a.id === matchedId,
-        }));
-        
-        set({ 
-          accounts: updatedAccounts, 
-          activeAccountId: matchedId,
-        });
-      }
+      // 更新本地状态（包括未登录时清除所有激活状态）
+      const { accounts } = get();
+      const updatedAccounts = accounts.map(a => ({
+        ...a,
+        isActive: matchedId ? a.id === matchedId : false,
+      }));
+      
+      set({ 
+        accounts: updatedAccounts, 
+        activeAccountId: matchedId,
+      });
     } catch (error) {
       console.error('Failed to sync current account:', error);
     }

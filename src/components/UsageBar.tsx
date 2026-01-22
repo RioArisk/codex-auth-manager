@@ -1,5 +1,4 @@
 import React from 'react';
-import { getProgressBarColor } from '../utils/statusParser';
 
 interface UsageBarProps {
   label: string;
@@ -8,28 +7,34 @@ interface UsageBarProps {
   showLabel?: boolean;
 }
 
+const getBarColor = (percent: number): string => {
+  if (percent >= 50) return 'bg-emerald-500';
+  if (percent >= 25) return 'bg-amber-500';
+  return 'bg-red-500';
+};
+
 export const UsageBar: React.FC<UsageBarProps> = ({ 
   label, 
   percentLeft, 
   resetTime,
   showLabel = true 
 }) => {
-  const barColor = getProgressBarColor(percentLeft);
+  const barColor = getBarColor(percentLeft);
   
   return (
     <div className="space-y-1">
       {showLabel && (
-        <div className="flex justify-between text-sm">
-          <span className="text-stone-400">{label}</span>
-          <span className="text-stone-300">
+        <div className="flex justify-between text-xs">
+          <span className="text-[#B3B3B3]">{label}</span>
+          <span className="text-[#B3B3B3]">
             {percentLeft}% 剩余
-            {resetTime && <span className="text-stone-500 ml-2">重置于 {resetTime}</span>}
+            {resetTime && <span className="text-[#606060] ml-2">重置于 {resetTime}</span>}
           </span>
         </div>
       )}
-      <div className="h-2 bg-stone-700 rounded-full overflow-hidden">
+      <div className="h-1.5 bg-[#404040] rounded-sm overflow-hidden">
         <div 
-          className={`h-full ${barColor} transition-all duration-500 ease-out rounded-full`}
+          className={`h-full ${barColor} transition-all duration-300 ease-out`}
           style={{ width: `${percentLeft}%` }}
         />
       </div>

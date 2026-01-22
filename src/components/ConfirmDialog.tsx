@@ -26,58 +26,60 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   const variantStyles = {
     danger: {
       icon: 'text-red-400',
-      button: 'bg-red-600 hover:bg-red-500',
+      iconBg: 'bg-red-600/20',
+      button: 'bg-red-600 hover:bg-red-700',
     },
     warning: {
-      icon: 'text-yellow-400',
-      button: 'bg-yellow-600 hover:bg-yellow-500',
+      icon: 'text-amber-400',
+      iconBg: 'bg-amber-600/20',
+      button: 'bg-amber-600 hover:bg-amber-700',
     },
     info: {
-      icon: 'text-amber-400',
-      button: 'bg-amber-600 hover:bg-amber-500',
+      icon: 'text-emerald-400',
+      iconBg: 'bg-emerald-600/20',
+      button: 'bg-emerald-600 hover:bg-emerald-700',
     },
   };
   
   const styles = variantStyles[variant];
   
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-stone-800 rounded-2xl p-6 w-full max-w-md mx-4 border border-stone-700 shadow-2xl">
-        <div className="flex items-center gap-4 mb-4">
-          <div className={`w-12 h-12 rounded-full bg-stone-700 flex items-center justify-center ${styles.icon}`}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in">
+      <div className="bg-[#2D2D2D] rounded-lg p-5 w-full max-w-sm mx-4 border border-[#404040] shadow-xl">
+        <div className="flex items-start gap-3 mb-4">
+          <div className={`w-10 h-10 rounded flex items-center justify-center flex-shrink-0 ${styles.iconBg} ${styles.icon}`}>
             {variant === 'danger' && (
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
             )}
             {variant === 'warning' && (
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             )}
             {variant === 'info' && (
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             )}
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-white">{title}</h3>
+            <h3 className="text-base font-semibold text-white">{title}</h3>
+            <p className="text-sm text-[#B3B3B3] mt-1">{message}</p>
           </div>
         </div>
         
-        <p className="text-stone-300 mb-6 pl-16">{message}</p>
-        
-        <div className="flex gap-3 justify-end">
+        <div className="flex gap-2 justify-end">
           <button
             onClick={onCancel}
-            className="px-4 py-2 bg-stone-700 hover:bg-stone-600 text-white rounded-lg font-medium transition-colors"
+            className="h-8 px-4 bg-[#383838] hover:bg-[#454545] text-white rounded text-sm transition-colors"
           >
             {cancelText}
           </button>
           <button
             onClick={onConfirm}
-            className={`px-4 py-2 ${styles.button} text-white rounded-lg font-medium transition-colors`}
+            className={`h-8 px-4 ${styles.button} text-white rounded text-sm font-medium transition-colors`}
           >
             {confirmText}
           </button>

@@ -62,7 +62,6 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
     setIsLoading(true);
     
     try {
-      // 验证JSON格式
       const parsed = JSON.parse(authJson);
       if (!parsed.tokens || !parsed.tokens.id_token) {
         throw new Error('无效的auth.json格式：缺少tokens字段');
@@ -70,7 +69,6 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
       
       await onAdd(authJson, alias || undefined);
       
-      // 重置表单
       setAuthJson('');
       setAlias('');
       onClose();
@@ -86,29 +84,29 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
   };
   
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-stone-800 rounded-2xl p-6 w-full max-w-lg mx-4 border border-stone-700 shadow-2xl">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-bold text-white">添加 Codex 账号</h2>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in">
+      <div className="bg-[#2D2D2D] rounded-lg p-5 w-full max-w-lg mx-4 border border-[#404040] shadow-xl">
+        <div className="flex justify-between items-center mb-5">
+          <h2 className="text-base font-semibold text-white">添加 Codex 账号</h2>
           <button
             onClick={onClose}
-            className="text-stone-400 hover:text-white transition-colors"
+            className="w-8 h-8 flex items-center justify-center text-[#808080] hover:text-white hover:bg-[#383838] rounded transition-colors"
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
         
         {/* 模式选择 */}
-        <div className="flex gap-2 mb-4">
+        <div className="flex gap-1 mb-4 p-1 bg-[#1F1F1F] rounded">
           <button
             type="button"
             onClick={() => setMode('paste')}
-            className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
+            className={`flex-1 py-1.5 px-3 rounded text-sm transition-colors ${
               mode === 'paste' 
-                ? 'bg-amber-600 text-white' 
-                : 'bg-stone-700 text-stone-300 hover:bg-stone-600'
+                ? 'bg-[#383838] text-white' 
+                : 'text-[#808080] hover:text-white'
             }`}
           >
             粘贴JSON
@@ -116,10 +114,10 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
           <button
             type="button"
             onClick={() => setMode('file')}
-            className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
+            className={`flex-1 py-1.5 px-3 rounded text-sm transition-colors ${
               mode === 'file' 
-                ? 'bg-amber-600 text-white' 
-                : 'bg-stone-700 text-stone-300 hover:bg-stone-600'
+                ? 'bg-[#383838] text-white' 
+                : 'text-[#808080] hover:text-white'
             }`}
           >
             选择文件
@@ -129,7 +127,7 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
         <form onSubmit={handleSubmit}>
           {/* 别名输入 */}
           <div className="mb-4">
-            <label className="block text-stone-300 text-sm font-medium mb-2">
+            <label className="block text-[#B3B3B3] text-xs font-medium mb-1.5">
               账号别名（可选）
             </label>
             <input
@@ -137,35 +135,35 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
               value={alias}
               onChange={(e) => setAlias(e.target.value)}
               placeholder="例如：工作账号、个人账号..."
-              className="w-full px-4 py-3 bg-stone-900 border border-stone-600 rounded-lg text-white placeholder-stone-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-colors"
+              className="w-full h-9 px-3 bg-[#1F1F1F] border border-[#404040] rounded text-sm text-white placeholder-[#606060] focus:border-emerald-600 outline-none transition-colors"
             />
           </div>
           
           {mode === 'paste' ? (
             <div className="mb-4">
-              <label className="block text-stone-300 text-sm font-medium mb-2">
+              <label className="block text-[#B3B3B3] text-xs font-medium mb-1.5">
                 auth.json 内容
               </label>
               <textarea
                 value={authJson}
                 onChange={(e) => setAuthJson(e.target.value)}
                 placeholder='粘贴 .codex/auth.json 文件的内容...'
-                rows={8}
-                className="w-full px-4 py-3 bg-stone-900 border border-stone-600 rounded-lg text-white placeholder-stone-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-colors font-mono text-sm resize-none"
+                rows={6}
+                className="w-full px-3 py-2 bg-[#1F1F1F] border border-[#404040] rounded text-sm text-white placeholder-[#606060] focus:border-emerald-600 outline-none transition-colors font-mono resize-none"
               />
             </div>
           ) : (
             <div className="mb-4">
-              <label className="block text-stone-300 text-sm font-medium mb-2">
+              <label className="block text-[#B3B3B3] text-xs font-medium mb-1.5">
                 选择 auth.json 文件
               </label>
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={handleSelectFile}
-                  className="flex-1 py-3 px-4 bg-stone-700 hover:bg-stone-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                  className="flex-1 h-9 bg-[#383838] hover:bg-[#454545] text-white rounded text-sm transition-colors flex items-center justify-center gap-2"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                   </svg>
                   选择文件
@@ -174,9 +172,9 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
                   type="button"
                   onClick={handleImportCurrent}
                   disabled={isLoading}
-                  className="flex-1 py-3 px-4 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                  className="flex-1 h-9 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 rounded text-sm transition-colors flex items-center justify-center gap-2"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
                   导入当前账号
@@ -184,9 +182,9 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
               </div>
               
               {authJson && (
-                <div className="mt-3 p-3 bg-stone-900 rounded-lg">
-                  <p className="text-xs text-stone-500 mb-1">已加载文件内容</p>
-                  <pre className="text-xs text-stone-400 overflow-auto max-h-32 font-mono">
+                <div className="mt-2 p-2 bg-[#1F1F1F] rounded border border-[#404040]">
+                  <p className="text-xs text-[#606060] mb-1">已加载文件内容</p>
+                  <pre className="text-xs text-[#808080] overflow-auto max-h-24 font-mono">
                     {authJson.substring(0, 200)}...
                   </pre>
                 </div>
@@ -196,24 +194,24 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
           
           {/* 错误提示 */}
           {error && (
-            <div className="mb-4 p-3 bg-red-900/30 border border-red-700 rounded-lg text-red-400 text-sm">
+            <div className="mb-4 p-2.5 bg-red-600/10 border border-red-600/30 rounded text-red-400 text-sm">
               {error}
             </div>
           )}
           
           {/* 操作按钮 */}
-          <div className="flex gap-3">
+          <div className="flex gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-3 bg-stone-700 hover:bg-stone-600 text-white rounded-lg font-medium transition-colors"
+              className="flex-1 h-9 bg-[#383838] hover:bg-[#454545] text-white rounded text-sm transition-colors"
             >
               取消
             </button>
             <button
               type="submit"
               disabled={!authJson || isLoading}
-              className="flex-1 py-3 bg-amber-600 hover:bg-amber-500 disabled:bg-stone-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+              className="flex-1 h-9 bg-emerald-600 hover:bg-emerald-700 disabled:bg-[#383838] disabled:text-[#606060] text-white rounded text-sm font-medium transition-colors"
             >
               {isLoading ? '添加中...' : '添加账号'}
             </button>
@@ -221,10 +219,10 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({
         </form>
         
         {/* 帮助提示 */}
-        <div className="mt-4 p-3 bg-stone-900/50 rounded-lg">
-          <p className="text-xs text-stone-500">
-            <strong className="text-stone-400">提示：</strong> auth.json 文件位于 
-            <code className="mx-1 px-1.5 py-0.5 bg-stone-800 rounded text-stone-400">
+        <div className="mt-4 p-2.5 bg-[#1F1F1F] rounded border border-[#404040]">
+          <p className="text-xs text-[#606060]">
+            <span className="text-[#808080]">提示：</span> auth.json 文件位于 
+            <code className="mx-1 px-1 py-0.5 bg-[#2D2D2D] rounded text-[#B3B3B3] font-mono">
               %USERPROFILE%\.codex\auth.json
             </code>
           </p>

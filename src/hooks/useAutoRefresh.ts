@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useAccountStore } from '../stores/useAccountStore';
 import { invoke } from '@tauri-apps/api/core';
-import { switchToAccount as switchAccountUtil } from '../utils/storage';
+import { switchToAccount as switchAccountUtil, getCurrentAuthAccountId } from '../utils/storage';
 import type { UsageInfo } from '../types';
 
 /**
@@ -19,8 +19,9 @@ interface RustUsageData {
  * 自动刷新用量数据的Hook
  */
 export function useAutoRefresh() {
-  const { accounts, config, updateUsage, activeAccountId } = useAccountStore();
+  const { accounts, config, updateUsage, activeAccountId, syncCurrentAccount } = useAccountStore();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const authCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isRefreshingRef = useRef(false);
   
   /**
@@ -110,7 +111,9 @@ export function useAutoRefresh() {
     if (isRefreshingRef.current || accounts.length === 0) return;
     
     isRefreshingRef.current = true;
-    const originalActiveId = activeAccountId;
+    
+    // 检查当前是否有登录账号（auth.json 是否存在）
+    const currentAuthId = await getCurrentAuthAccountId();
     
     try {
       for (const account of accounts) {
@@ -122,9 +125,10 @@ export function useAutoRefresh() {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
       
-      // 恢复原来的活动账号
-      if (originalActiveId) {
-        await switchAccountUtil(originalActiveId);
+      // 只有当刷新前确实有登录账号时，才恢复原来的活动账号
+      // 如果 auth.json 不存在（用户已退出登录），不要自动创建
+      if (currentAuthId && activeAccountId) {
+        await switchAccountUtil(activeAccountId);
       }
     } finally {
       isRefreshingRef.current = false;
@@ -138,7 +142,9 @@ export function useAutoRefresh() {
     if (isRefreshingRef.current) return;
     
     isRefreshingRef.current = true;
-    const originalActiveId = activeAccountId;
+    
+    // 检查当前是否有登录账号（auth.json 是否存在）
+    const currentAuthId = await getCurrentAuthAccountId();
     
     try {
       const usage = await fetchAccountUsage(accountId);
@@ -146,9 +152,10 @@ export function useAutoRefresh() {
         await updateUsage(accountId, usage);
       }
       
-      // 如果不是当前账号，恢复原来的活动账号
-      if (originalActiveId && originalActiveId !== accountId) {
-        await switchAccountUtil(originalActiveId);
+      // 只有当刷新前确实有登录账号时，才恢复原来的活动账号
+      // 如果 auth.json 不存在（用户已退出登录），不要自动创建
+      if (currentAuthId && activeAccountId && activeAccountId !== accountId) {
+        await switchAccountUtil(activeAccountId);
       }
     } finally {
       isRefreshingRef.current = false;
@@ -178,6 +185,27 @@ export function useAutoRefresh() {
       }
     };
   }, [config.autoRefreshInterval, accounts.length, refreshAllUsage]);
+  
+  // 设置 auth.json 检测定时器（每30秒检测一次）
+  // 用于检测外部登录/登出操作并同步前端状态
+  useEffect(() => {
+    // 清除旧的定时器
+    if (authCheckIntervalRef.current) {
+      clearInterval(authCheckIntervalRef.current);
+    }
+    
+    // 每30秒检测一次 auth.json 状态
+    const AUTH_CHECK_INTERVAL = 30 * 1000; // 30秒
+    authCheckIntervalRef.current = setInterval(() => {
+      syncCurrentAccount();
+    }, AUTH_CHECK_INTERVAL);
+    
+    return () => {
+      if (authCheckIntervalRef.current) {
+        clearInterval(authCheckIntervalRef.current);
+      }
+    };
+  }, [syncCurrentAccount]);
   
   return {
     refreshAllUsage,
