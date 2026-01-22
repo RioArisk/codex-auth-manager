@@ -38,21 +38,21 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts }) => {
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
       {/* 总账号数 */}
-      <div className="bg-slate-800/60 rounded-xl p-4 border border-slate-700">
+      <div className="bg-stone-800/60 rounded-xl p-4 border border-stone-700">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-blue-600/20 flex items-center justify-center">
-            <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="w-10 h-10 rounded-lg bg-amber-600/20 flex items-center justify-center">
+            <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
           </div>
           <div>
             <p className="text-2xl font-bold text-white">{accounts.length}</p>
-            <p className="text-sm text-slate-400">账号总数</p>
+            <p className="text-sm text-stone-400">账号总数</p>
           </div>
         </div>
         <div className="mt-3 flex gap-2 flex-wrap">
           {Object.entries(planCounts).map(([plan, count]) => (
-            <span key={plan} className="text-xs px-2 py-1 bg-slate-700 rounded-full text-slate-300">
+            <span key={plan} className="text-xs px-2 py-1 bg-stone-700 rounded-full text-stone-300">
               {plan}: {count}
             </span>
           ))}
@@ -60,7 +60,7 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts }) => {
       </div>
       
       {/* 平均周限额 */}
-      <div className="bg-slate-800/60 rounded-xl p-4 border border-slate-700">
+      <div className="bg-stone-800/60 rounded-xl p-4 border border-stone-700">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-emerald-600/20 flex items-center justify-center">
             <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -69,28 +69,28 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts }) => {
           </div>
           <div>
             <p className="text-2xl font-bold text-white">{avgWeeklyLeft.toFixed(0)}%</p>
-            <p className="text-sm text-slate-400">平均周限额剩余</p>
+            <p className="text-sm text-stone-400">平均周限额剩余</p>
           </div>
         </div>
       </div>
       
       {/* 平均5小时限额 */}
-      <div className="bg-slate-800/60 rounded-xl p-4 border border-slate-700">
+      <div className="bg-stone-800/60 rounded-xl p-4 border border-stone-700">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-purple-600/20 flex items-center justify-center">
-            <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="w-10 h-10 rounded-lg bg-orange-600/20 flex items-center justify-center">
+            <svg className="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
           <div>
             <p className="text-2xl font-bold text-white">{avgFiveHourLeft.toFixed(0)}%</p>
-            <p className="text-sm text-slate-400">平均5h限额剩余</p>
+            <p className="text-sm text-stone-400">平均5h限额剩余</p>
           </div>
         </div>
       </div>
       
       {/* 推荐账号 */}
-      <div className="bg-gradient-to-br from-emerald-900/40 to-slate-800 rounded-xl p-4 border border-emerald-700/50">
+      <div className="bg-gradient-to-br from-emerald-900/40 to-stone-800 rounded-xl p-4 border border-emerald-700/50">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-emerald-600/30 flex items-center justify-center">
             <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -102,12 +102,12 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts }) => {
             {bestAccount ? (
               <>
                 <p className="text-white font-semibold truncate">{bestAccount.alias}</p>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-stone-400">
                   周限额剩余 {bestAccount.usageInfo?.weeklyLimit.percentLeft || 0}%
                 </p>
               </>
             ) : (
-              <p className="text-slate-400 text-sm">暂无用量数据</p>
+              <p className="text-stone-400 text-sm">暂无用量数据</p>
             )}
           </div>
         </div>

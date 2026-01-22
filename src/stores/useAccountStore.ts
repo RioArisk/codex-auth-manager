@@ -7,6 +7,7 @@ import {
   addAccount as addAccountToStore,
   removeAccount as removeAccountFromStore,
   updateAccountUsage as updateUsage,
+  syncCurrentAccount as syncCurrent,
 } from '../utils/storage';
 
 interface AccountState {
@@ -19,6 +20,7 @@ interface AccountState {
   
   // Actions
   loadAccounts: () => Promise<void>;
+  syncCurrentAccount: () => Promise<void>;
   addAccount: (authJson: string, alias?: string) => Promise<void>;
   removeAccount: (accountId: string) => Promise<void>;
   switchToAccount: (accountId: string) => Promise<void>;
@@ -50,11 +52,36 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         config: store.config,
         isLoading: false 
       });
+      
+      // 加载后自动同步当前登录账号
+      await get().syncCurrentAccount();
     } catch (error) {
       set({ 
         isLoading: false, 
         error: error instanceof Error ? error.message : 'Failed to load accounts' 
       });
+    }
+  },
+  
+  syncCurrentAccount: async () => {
+    try {
+      const matchedId = await syncCurrent();
+      
+      if (matchedId) {
+        // 更新本地状态
+        const { accounts } = get();
+        const updatedAccounts = accounts.map(a => ({
+          ...a,
+          isActive: a.id === matchedId,
+        }));
+        
+        set({ 
+          accounts: updatedAccounts, 
+          activeAccountId: matchedId,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to sync current account:', error);
     }
   },
   

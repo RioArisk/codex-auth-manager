@@ -33,8 +33,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
       button: 'bg-yellow-600 hover:bg-yellow-500',
     },
     info: {
-      icon: 'text-blue-400',
-      button: 'bg-blue-600 hover:bg-blue-500',
+      icon: 'text-amber-400',
+      button: 'bg-amber-600 hover:bg-amber-500',
     },
   };
   
@@ -42,9 +42,9 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md mx-4 border border-slate-700 shadow-2xl">
+      <div className="bg-stone-800 rounded-2xl p-6 w-full max-w-md mx-4 border border-stone-700 shadow-2xl">
         <div className="flex items-center gap-4 mb-4">
-          <div className={`w-12 h-12 rounded-full bg-slate-700 flex items-center justify-center ${styles.icon}`}>
+          <div className={`w-12 h-12 rounded-full bg-stone-700 flex items-center justify-center ${styles.icon}`}>
             {variant === 'danger' && (
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -66,12 +66,12 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           </div>
         </div>
         
-        <p className="text-slate-300 mb-6 pl-16">{message}</p>
+        <p className="text-stone-300 mb-6 pl-16">{message}</p>
         
         <div className="flex gap-3 justify-end">
           <button
             onClick={onCancel}
-            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors"
+            className="px-4 py-2 bg-stone-700 hover:bg-stone-600 text-white rounded-lg font-medium transition-colors"
           >
             {cancelText}
           </button>

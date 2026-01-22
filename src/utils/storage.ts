@@ -173,3 +173,68 @@ export async function updateAppConfig(config: Partial<AppConfig>): Promise<void>
   store.config = { ...store.config, ...config };
   await saveAccountsStore(store);
 }
+
+/**
+ * 读取当前 .codex/auth.json 的账号ID
+ */
+export async function getCurrentAuthAccountId(): Promise<string | null> {
+  try {
+    const authJson = await invoke<string>('read_codex_auth');
+    const authConfig = JSON.parse(authJson) as CodexAuthConfig;
+    
+    // 优先从 tokens.account_id 获取
+    if (authConfig.tokens?.account_id) {
+      return authConfig.tokens.account_id;
+    }
+    
+    // 尝试从 JWT 解析
+    if (authConfig.tokens?.id_token) {
+      const accountInfo = parseAccountInfo(authConfig);
+      return accountInfo.accountId;
+    }
+    
+    return null;
+  } catch (error) {
+    console.log('Failed to read current auth:', error);
+    return null;
+  }
+}
+
+/**
+ * 同步当前登录账号状态
+ * 读取 .codex/auth.json 并与系统中的账号比对，更新 isActive 状态
+ */
+export async function syncCurrentAccount(): Promise<string | null> {
+  const currentAccountId = await getCurrentAuthAccountId();
+  
+  if (!currentAccountId) {
+    return null;
+  }
+  
+  const store = await loadAccountsStore();
+  let matchedId: string | null = null;
+  let needsSave = false;
+  
+  // 遍历所有账号，找到匹配的并更新 isActive
+  store.accounts.forEach((acc) => {
+    const isMatch = acc.accountInfo.accountId === currentAccountId || 
+                    acc.authConfig.tokens.account_id === currentAccountId;
+    
+    if (isMatch) {
+      matchedId = acc.id;
+      if (!acc.isActive) {
+        acc.isActive = true;
+        needsSave = true;
+      }
+    } else if (acc.isActive) {
+      acc.isActive = false;
+      needsSave = true;
+    }
+  });
+  
+  if (needsSave) {
+    await saveAccountsStore(store);
+  }
+  
+  return matchedId;
+}
