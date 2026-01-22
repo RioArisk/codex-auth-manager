@@ -32,13 +32,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
   
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-[#2D2D2D] rounded-lg p-5 w-full max-w-sm mx-4 border border-[#404040] shadow-xl">
+    <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50 animate-fade-in">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm mx-4 border border-[var(--dash-border)] shadow-[0_24px_60px_rgba(15,23,42,0.2)]">
         <div className="flex justify-between items-center mb-5">
-          <h2 className="text-base font-semibold text-white">设置</h2>
+          <h2 className="text-base font-semibold text-[var(--dash-text-primary)]">设置</h2>
           <button
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center text-[#808080] hover:text-white hover:bg-[#383838] rounded transition-colors"
+            className="w-9 h-9 flex items-center justify-center text-[var(--dash-text-muted)] hover:text-[var(--dash-text-primary)] hover:bg-slate-100 rounded-full transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -49,7 +49,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div className="space-y-5">
           {/* 自动刷新间隔 */}
           <div>
-            <label className="block text-[#B3B3B3] text-xs font-medium mb-2">
+            <label className="block text-[var(--dash-text-secondary)] text-xs font-medium mb-2">
               自动刷新间隔
             </label>
             <div className="flex items-center gap-3">
@@ -60,26 +60,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 step="5"
                 value={autoRefreshInterval}
                 onChange={(e) => setAutoRefreshInterval(Number(e.target.value))}
-                className="flex-1 h-1 bg-[#404040] rounded appearance-none cursor-pointer accent-emerald-600"
+                className="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-blue-500"
               />
-              <span className="text-white text-sm w-16 text-right tabular-nums">
+              <span className="text-[var(--dash-text-primary)] text-sm w-16 text-right tabular-nums">
                 {autoRefreshInterval === 0 ? '禁用' : `${autoRefreshInterval} 分钟`}
               </span>
             </div>
-            <p className="text-xs text-[#606060] mt-2">
+            <p className="text-xs text-[var(--dash-text-muted)] mt-2">
               设置为0禁用自动刷新
             </p>
           </div>
           
           {/* 关于 */}
-          <div className="pt-4 border-t border-[#404040]">
-            <h3 className="text-[#B3B3B3] text-xs font-medium mb-2">关于</h3>
-            <div className="space-y-1 text-sm text-[#808080]">
+          <div className="pt-4 border-t border-slate-200">
+            <h3 className="text-[var(--dash-text-secondary)] text-xs font-medium mb-2">关于</h3>
+            <div className="space-y-1 text-sm text-[var(--dash-text-secondary)]">
               <p>Codex Manager v0.1.0</p>
-              <p className="text-xs text-[#606060]">
+              <p className="text-xs text-[var(--dash-text-muted)]">
                 管理多个 OpenAI Codex 账号的桌面工具
               </p>
-              <p className="text-xs text-[#606060] mt-2">
+              <p className="text-xs text-[var(--dash-text-muted)] mt-2">
                 所有数据存储在本地
               </p>
             </div>
@@ -90,14 +90,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div className="flex gap-2 mt-5">
           <button
             onClick={onClose}
-            className="flex-1 h-9 bg-[#383838] hover:bg-[#454545] text-white rounded text-sm transition-colors"
+            className="flex-1 h-10 bg-slate-100 hover:bg-slate-200 text-[var(--dash-text-primary)] rounded-xl text-sm transition-colors"
           >
             取消
           </button>
           <button
             onClick={handleSave}
             disabled={isSaving}
-            className="flex-1 h-9 bg-emerald-600 hover:bg-emerald-700 disabled:bg-[#383838] text-white rounded text-sm font-medium transition-colors"
+            className="flex-1 h-10 bg-[var(--dash-accent)] hover:brightness-110 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl text-sm font-medium transition-colors"
           >
             {isSaving ? '保存中...' : '保存'}
           </button>

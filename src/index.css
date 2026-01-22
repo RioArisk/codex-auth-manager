@@ -1,35 +1,22 @@
 @import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
 
-/* Windows 11 风格 CSS 变量 */
 :root {
-  /* 背景色 */
-  --win-bg-solid: #1F1F1F;
-  --win-bg-card: #2D2D2D;
-  --win-bg-card-hover: #333333;
-  --win-bg-elevated: #3D3D3D;
-  
-  /* 边框色 */
-  --win-border: #404040;
-  --win-border-light: #4D4D4D;
-  
-  /* 文字色 */
-  --win-text-primary: #FFFFFF;
-  --win-text-secondary: #B3B3B3;
-  --win-text-tertiary: #808080;
-  
-  /* 主题色 - 使用绿色系 */
-  --win-accent: #10B981;
-  --win-accent-hover: #059669;
-  --win-accent-light: rgba(16, 185, 129, 0.15);
-  
-  /* 状态色 */
-  --win-success: #10B981;
-  --win-warning: #F59E0B;
-  --win-danger: #EF4444;
-  --win-info: #60A5FA;
+  --dash-bg: #f2f6ff;
+  --dash-bg-strong: #eaf0ff;
+  --dash-card: #ffffff;
+  --dash-border: #e2e8f0;
+  --dash-text-primary: #1f2a37;
+  --dash-text-secondary: #64748b;
+  --dash-text-muted: #94a3b8;
+  --dash-accent: #2f6bff;
+  --dash-accent-soft: #e7efff;
+  --dash-success: #22c55e;
+  --dash-warning: #f59e0b;
+  --dash-danger: #ef4444;
+  --dash-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
 }
 
-/* 全局样式 */
 html {
   overflow-y: scroll;
   scrollbar-gutter: stable;
@@ -37,16 +24,23 @@ html {
 
 body {
   margin: 0;
-  font-family: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, "Microsoft YaHei", sans-serif;
-  background-color: var(--win-bg-solid);
-  color: var(--win-text-primary);
+  font-family: "Plus Jakarta Sans", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background-color: var(--dash-bg);
+  background-image:
+    radial-gradient(circle at top left, rgba(90, 140, 255, 0.18), transparent 45%),
+    radial-gradient(circle at top right, rgba(255, 210, 120, 0.2), transparent 40%),
+    radial-gradient(circle at 20% 80%, rgba(110, 210, 255, 0.15), transparent 45%);
+  color: var(--dash-text-primary);
   min-height: 100vh;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Windows 风格滚动条 */
+#root {
+  min-height: 100vh;
+}
+
 ::-webkit-scrollbar {
   width: 12px;
   height: 12px;
@@ -57,55 +51,62 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #5A5A5A;
-  border-radius: 6px;
-  border: 3px solid var(--win-bg-solid);
+  background: rgba(148, 163, 184, 0.6);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #6B6B6B;
+  background: rgba(100, 116, 139, 0.7);
+  background-clip: content-box;
 }
 
-/* 简洁的动画 */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes slideIn {
-  from { opacity: 0; transform: scale(0.98); }
-  to { opacity: 1; transform: scale(1); }
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.2s ease-out forwards;
+  animation: fadeIn 0.35s ease-out forwards;
 }
 
 .page-enter {
-  animation: slideIn 0.15s ease-out both;
+  animation: slideUp 0.4s ease-out both;
 }
 
-/* Windows 风格输入框 */
-input, textarea, select {
+input,
+textarea,
+select {
   font-family: inherit;
 }
 
-/* Windows 风格按钮悬停效果 */
-.win-button {
-  transition: background-color 0.1s ease, border-color 0.1s ease;
+.dash-card {
+  background: var(--dash-card);
+  border: 1px solid var(--dash-border);
+  border-radius: 22px;
+  box-shadow: var(--dash-shadow);
 }
 
-/* 卡片悬停效果 */
-.win-card {
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+.dash-card-soft {
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  border-radius: 22px;
+  box-shadow: var(--dash-shadow);
+  backdrop-filter: blur(20px);
 }
 
-.win-card:hover {
-  border-color: var(--win-border-light);
-}
-
-/* 亚克力效果模拟 */
-.win-acrylic {
-  background-color: rgba(45, 45, 45, 0.85);
-  backdrop-filter: blur(20px) saturate(125%);
+.dash-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
 }

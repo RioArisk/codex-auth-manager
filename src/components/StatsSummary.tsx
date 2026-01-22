@@ -9,6 +9,7 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts }) => {
   if (accounts.length === 0) return null;
   
   const accountsWithUsage = accounts.filter(a => a.usageInfo);
+  const activeCount = accounts.filter(a => a.isActive).length;
   
   const bestAccount = accountsWithUsage.reduce<StoredAccount | null>((best, current) => {
     if (!best) return current;
@@ -32,78 +33,72 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts }) => {
   }, {} as Record<string, number>);
   
   return (
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
-      {/* 总账号数 */}
-      <div className="bg-[#2D2D2D] rounded-md p-4 border border-[#404040]">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded bg-[#383838] flex items-center justify-center">
-            <svg className="w-5 h-5 text-[#B3B3B3]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-          </div>
-          <div>
-            <p className="text-xl font-semibold text-white">{accounts.length}</p>
-            <p className="text-xs text-[#808080]">账号总数</p>
-          </div>
-        </div>
-        <div className="mt-3 flex gap-1.5 flex-wrap">
-          {Object.entries(planCounts).map(([plan, count]) => (
-            <span key={plan} className="text-xs px-1.5 py-0.5 bg-[#383838] rounded text-[#B3B3B3]">
-              {plan}: {count}
+    <div className="dash-card p-5 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 md:divide-x md:divide-slate-200">
+        <div className="md:pr-4">
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--dash-text-muted)]">账号总览</p>
+          <div className="mt-2 flex items-center gap-2">
+            <p className="text-2xl font-semibold text-[var(--dash-text-primary)]">{accounts.length}</p>
+            <span className="dash-pill bg-emerald-50 text-emerald-600">
+              活跃 {activeCount}
             </span>
-          ))}
-        </div>
-      </div>
-      
-      {/* 平均周限额 */}
-      <div className="bg-[#2D2D2D] rounded-md p-4 border border-[#404040]">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded bg-[#383838] flex items-center justify-center">
-            <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
           </div>
-          <div>
-            <p className="text-xl font-semibold text-white">{avgWeeklyLeft.toFixed(0)}%</p>
-            <p className="text-xs text-[#808080]">平均周限额</p>
+          <div className="mt-3 flex gap-2 flex-wrap">
+            {Object.entries(planCounts).map(([plan, count]) => (
+              <span
+                key={plan}
+                className="text-xs px-2 py-1 rounded-full bg-slate-100 text-[var(--dash-text-secondary)]"
+              >
+                {plan.toUpperCase()} · {count}
+              </span>
+            ))}
           </div>
         </div>
-      </div>
-      
-      {/* 平均5小时限额 */}
-      <div className="bg-[#2D2D2D] rounded-md p-4 border border-[#404040]">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded bg-[#383838] flex items-center justify-center">
-            <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+
+        <div className="md:px-4">
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--dash-text-muted)]">周限额平均</p>
+          <div className="mt-2 flex items-center gap-2">
+            <p className="text-2xl font-semibold text-[var(--dash-text-primary)]">
+              {avgWeeklyLeft.toFixed(0)}%
+            </p>
+            <span className={`dash-pill ${avgWeeklyLeft >= 50 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+              {avgWeeklyLeft >= 50 ? '健康' : '需关注'}
+            </span>
           </div>
-          <div>
-            <p className="text-xl font-semibold text-white">{avgFiveHourLeft.toFixed(0)}%</p>
-            <p className="text-xs text-[#808080]">平均5h限额</p>
-          </div>
+          <p className="text-xs text-[var(--dash-text-secondary)] mt-2">
+            体现整体账号周限额余量
+          </p>
         </div>
-      </div>
-      
-      {/* 推荐账号 */}
-      <div className="bg-[#2D2D2D] rounded-md p-4 border border-emerald-600/50">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded bg-emerald-600/20 flex items-center justify-center">
-            <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+
+        <div className="md:px-4">
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--dash-text-muted)]">5h 限额平均</p>
+          <div className="mt-2 flex items-center gap-2">
+            <p className="text-2xl font-semibold text-[var(--dash-text-primary)]">
+              {avgFiveHourLeft.toFixed(0)}%
+            </p>
+            <span className={`dash-pill ${avgFiveHourLeft >= 50 ? 'bg-sky-50 text-sky-600' : 'bg-rose-50 text-rose-600'}`}>
+              {avgFiveHourLeft >= 50 ? '充足' : '紧张'}
+            </span>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-emerald-400 font-medium">推荐使用</p>
+          <p className="text-xs text-[var(--dash-text-secondary)] mt-2">
+            用于短期调用压力判断
+          </p>
+        </div>
+
+        <div className="md:pl-4">
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--dash-text-muted)]">推荐账号</p>
+          <div className="mt-2">
             {bestAccount ? (
               <>
-                <p className="text-white font-semibold text-sm truncate">{bestAccount.alias}</p>
-                <p className="text-xs text-[#808080]">
-                  周限额 {bestAccount.usageInfo?.weeklyLimit.percentLeft || 0}%
+                <p className="text-lg font-semibold text-[var(--dash-text-primary)] truncate">
+                  {bestAccount.alias}
+                </p>
+                <p className="text-xs text-[var(--dash-text-secondary)] mt-1">
+                  周限额剩余 {bestAccount.usageInfo?.weeklyLimit.percentLeft || 0}%
                 </p>
               </>
             ) : (
-              <p className="text-[#808080] text-sm">暂无数据</p>
+              <p className="text-sm text-[var(--dash-text-secondary)]">暂无用量数据</p>
             )}
           </div>
         </div>
