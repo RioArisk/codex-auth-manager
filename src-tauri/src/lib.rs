@@ -10,6 +10,13 @@ fn get_app_data_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "Cannot find app data directory".to_string())
 }
 
+/// 获取用户目录下的 .codex_manager 目录
+fn get_codex_manager_dir() -> Result<PathBuf, String> {
+    dirs::home_dir()
+        .map(|p| p.join(".codex_manager"))
+        .ok_or_else(|| "Cannot find home directory".to_string())
+}
+
 /// 获取accounts.json路径
 fn get_accounts_store_path() -> Result<PathBuf, String> {
     let dir = get_app_data_dir()?;
@@ -22,6 +29,19 @@ fn get_codex_auth_path() -> Result<PathBuf, String> {
     dirs::home_dir()
         .map(|p| p.join(".codex").join("auth.json"))
         .ok_or_else(|| "Cannot find home directory".to_string())
+}
+
+/// 获取账号 auth 存储目录
+fn get_auth_store_dir() -> Result<PathBuf, String> {
+    let dir = get_codex_manager_dir()?.join("auths");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// 获取指定账号 auth 文件路径
+fn get_account_auth_path(account_id: &str) -> Result<PathBuf, String> {
+    let dir = get_auth_store_dir()?;
+    Ok(dir.join(format!("{}.json", account_id)))
 }
 
 /// 加载账号存储数据
@@ -66,6 +86,33 @@ fn read_codex_auth() -> Result<String, String> {
     }
     
     fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+/// 保存指定账号 auth
+#[tauri::command]
+fn save_account_auth(account_id: String, auth_config: String) -> Result<(), String> {
+    let path = get_account_auth_path(&account_id)?;
+    fs::write(&path, auth_config).map_err(|e| e.to_string())
+}
+
+/// 读取指定账号 auth
+#[tauri::command]
+fn read_account_auth(account_id: String) -> Result<String, String> {
+    let path = get_account_auth_path(&account_id)?;
+    if !path.exists() {
+        return Err("Account auth not found".to_string());
+    }
+    fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+/// 删除指定账号 auth
+#[tauri::command]
+fn delete_account_auth(account_id: String) -> Result<(), String> {
+    let path = get_account_auth_path(&account_id)?;
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// 读取文件内容
@@ -414,6 +461,9 @@ pub fn run() {
             save_accounts_store,
             write_codex_auth,
             read_codex_auth,
+            save_account_auth,
+            read_account_auth,
+            delete_account_auth,
             read_file_content,
             get_home_dir,
             get_usage_from_sessions,

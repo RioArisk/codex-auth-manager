@@ -14,21 +14,64 @@ const DEFAULT_STORE: AccountsStore = {
   config: DEFAULT_CONFIG,
 };
 
+type LegacyStoredAccount = StoredAccount & { authConfig?: CodexAuthConfig };
+
+async function saveAccountAuth(accountId: string, authConfig: CodexAuthConfig): Promise<void> {
+  await invoke('save_account_auth', {
+    accountId,
+    authConfig: JSON.stringify(authConfig),
+  });
+}
+
+async function loadAccountAuth(accountId: string): Promise<CodexAuthConfig> {
+  const authJson = await invoke<string>('read_account_auth', { accountId });
+  return JSON.parse(authJson) as CodexAuthConfig;
+}
+
+async function deleteAccountAuth(accountId: string): Promise<void> {
+  await invoke('delete_account_auth', { accountId });
+}
+
 /**
  * 加载账号存储数据
  */
 export async function loadAccountsStore(): Promise<AccountsStore> {
   try {
     const data = await invoke<string>('load_accounts_store');
-    const store = JSON.parse(data) as AccountsStore;
-    return {
+    const store = JSON.parse(data) as AccountsStore & { accounts?: LegacyStoredAccount[] };
+    const accounts = store.accounts ?? [];
+    let needsSave = false;
+
+    const normalizedAccounts: StoredAccount[] = [];
+
+    for (const account of accounts) {
+      if (account.authConfig) {
+        await saveAccountAuth(account.id, account.authConfig);
+        needsSave = true;
+      }
+      const { authConfig, ...rest } = account;
+      normalizedAccounts.push(rest);
+    }
+
+    const normalizedStore: AccountsStore = {
       ...DEFAULT_STORE,
       ...store,
+      accounts: normalizedAccounts,
       config: { ...DEFAULT_CONFIG, ...store.config },
     };
+
+    if (needsSave) {
+      await saveAccountsStore(normalizedStore);
+    }
+
+    return normalizedStore;
   } catch (error) {
-    console.log('No existing store found, using default:', error);
-    return DEFAULT_STORE;
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('Store file not found')) {
+      console.log('No existing store found, using default:', error);
+      return DEFAULT_STORE;
+    }
+    throw error;
   }
 }
 
@@ -60,10 +103,12 @@ export async function addAccount(
   const now = new Date().toISOString();
   
   if (existingIndex >= 0) {
+    const existingAccount = store.accounts[existingIndex];
+    await saveAccountAuth(existingAccount.id, authConfig);
+
     // 更新现有账号
     store.accounts[existingIndex] = {
-      ...store.accounts[existingIndex],
-      authConfig,
+      ...existingAccount,
       accountInfo,
       alias: alias || store.accounts[existingIndex].alias,
       updatedAt: now,
@@ -76,13 +121,13 @@ export async function addAccount(
   const newAccount: StoredAccount = {
     id: generateId(),
     alias: alias || accountInfo.email.split('@')[0],
-    authConfig,
     accountInfo,
     isActive: store.accounts.length === 0, // 第一个账号默认激活
     createdAt: now,
     updatedAt: now,
   };
   
+  await saveAccountAuth(newAccount.id, authConfig);
   store.accounts.push(newAccount);
   await saveAccountsStore(store);
   
@@ -96,6 +141,7 @@ export async function removeAccount(accountId: string): Promise<void> {
   const store = await loadAccountsStore();
   store.accounts = store.accounts.filter((acc) => acc.id !== accountId);
   await saveAccountsStore(store);
+  await deleteAccountAuth(accountId);
 }
 
 /**
@@ -147,9 +193,11 @@ export async function switchToAccount(accountId: string): Promise<void> {
     throw new Error('Account not found');
   }
   
+  const authConfig = await loadAccountAuth(accountId);
+
   // 调用Tauri后端写入auth.json
   await invoke('write_codex_auth', {
-    authConfig: JSON.stringify(account.authConfig),
+    authConfig: JSON.stringify(authConfig),
   });
   
   // 更新活动状态
@@ -229,8 +277,7 @@ export async function syncCurrentAccount(): Promise<string | null> {
   
   // 遍历所有账号，找到匹配的并更新 isActive
   store.accounts.forEach((acc) => {
-    const isMatch = acc.accountInfo.accountId === currentAccountId || 
-                    acc.authConfig.tokens.account_id === currentAccountId;
+    const isMatch = acc.accountInfo.accountId === currentAccountId;
     
     if (isMatch) {
       matchedId = acc.id;

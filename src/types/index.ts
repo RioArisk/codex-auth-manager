@@ -46,7 +46,6 @@ export interface UsageInfo {
 export interface StoredAccount {
   id: string;
   alias: string; // 用户自定义别名
-  authConfig: CodexAuthConfig;
   accountInfo: AccountInfo;
   usageInfo?: UsageInfo;
   isActive: boolean; // 是否是当前激活账号
