@@ -5,6 +5,17 @@ import { switchToAccount as switchAccountUtil } from '../utils/storage';
 import type { UsageInfo } from '../types';
 
 /**
+ * Rust 后端返回的用量数据结构
+ */
+interface RustUsageData {
+  five_hour_percent_left: number;
+  five_hour_reset_time: string;
+  weekly_percent_left: number;
+  weekly_reset_time: string;
+  last_updated: string;
+}
+
+/**
  * 自动刷新用量数据的Hook
  */
 export function useAutoRefresh() {
@@ -14,48 +25,83 @@ export function useAutoRefresh() {
   
   /**
    * 获取单个账号的用量信息
-   * 需要先切换到该账号，然后执行codex命令
+   * 通过解析本地 ~/.codex/sessions 日志文件获取真实数据
+   * 
+   * 重要逻辑：
+   * - 活动账号：可以使用最新 session 的数据（因为它就是用活动账号创建的）
+   * - 非活动账号：只能使用该账号自己的历史数据，不能混用其他账号的数据
    */
   const fetchAccountUsage = useCallback(async (accountId: string): Promise<UsageInfo | null> => {
     try {
-      // 切换到目标账号
+      // 找到账号信息
       const account = accounts.find(a => a.id === accountId);
       if (!account) return null;
       
-      // 写入auth.json（临时切换）
-      await invoke('write_codex_auth', {
-        authConfig: JSON.stringify(account.authConfig),
-      });
+      const isActiveAccount = accountId === activeAccountId;
       
-      // 尝试运行codex并获取状态
-      // 由于/status是交互式命令，我们这里使用一个模拟的方式
-      // 实际实现可能需要用更复杂的方法
-      
-      // 模拟一些用量数据（实际应用中需要真正解析）
-      // TODO: 实现真正的用量获取
-      const mockUsage: UsageInfo = {
-        contextWindow: {
-          percentLeft: Math.floor(Math.random() * 30) + 70,
-          used: '15.2K',
-          total: '258K',
-        },
-        fiveHourLimit: {
-          percentLeft: Math.floor(Math.random() * 40) + 60,
-          resetTime: new Date(Date.now() + 3600000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-        },
-        weeklyLimit: {
-          percentLeft: Math.floor(Math.random() * 50) + 50,
-          resetTime: '周一 00:00',
-        },
-        lastUpdated: new Date().toISOString(),
-      };
-      
-      return mockUsage;
+      // 先尝试通过邮箱查找该账号特定的用量数据
+      try {
+        const usageData = await invoke<RustUsageData>('get_account_usage', {
+          accountEmail: account.accountInfo.email,
+        });
+        
+        return {
+          contextWindow: {
+            percentLeft: 100, // 从日志中暂时无法获取，设为默认值
+            used: '0K',
+            total: '258K',
+          },
+          fiveHourLimit: {
+            percentLeft: Math.round(usageData.five_hour_percent_left),
+            resetTime: usageData.five_hour_reset_time,
+          },
+          weeklyLimit: {
+            percentLeft: Math.round(usageData.weekly_percent_left),
+            resetTime: usageData.weekly_reset_time,
+          },
+          lastUpdated: new Date().toISOString(),
+        };
+      } catch (accountError) {
+        console.warn(`No specific data for ${account.accountInfo.email}`);
+        
+        // 只有活动账号才可以使用最新 session 的数据
+        // 因为最新 session 一定是用活动账号创建的
+        if (isActiveAccount) {
+          try {
+            const usageData = await invoke<RustUsageData>('get_usage_from_sessions');
+            
+            return {
+              contextWindow: {
+                percentLeft: 100,
+                used: '0K',
+                total: '258K',
+              },
+              fiveHourLimit: {
+                percentLeft: Math.round(usageData.five_hour_percent_left),
+                resetTime: usageData.five_hour_reset_time,
+              },
+              weeklyLimit: {
+                percentLeft: Math.round(usageData.weekly_percent_left),
+                resetTime: usageData.weekly_reset_time,
+              },
+              lastUpdated: new Date().toISOString(),
+            };
+          } catch (sessionError) {
+            console.warn('No session data available for active account:', sessionError);
+            return null;
+          }
+        } else {
+          // 非活动账号：如果找不到该账号的历史数据，返回 null
+          // 不要使用其他账号的数据，避免数据混淆
+          console.warn(`Account ${account.accountInfo.email} has no usage history. Need to use codex with this account first.`);
+          return null;
+        }
+      }
     } catch (error) {
       console.error(`Failed to fetch usage for account ${accountId}:`, error);
       return null;
     }
-  }, [accounts]);
+  }, [accounts, activeAccountId]);
   
   /**
    * 刷新所有账号的用量

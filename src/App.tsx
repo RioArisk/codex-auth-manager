@@ -139,9 +139,9 @@ function App() {
                     onDelete={() => handleDeleteClick(account.id, account.alias)}
                     onRefresh={() => handleRefresh(account.id)}
                   />
-                </div>
+      </div>
               ))}
-            </div>
+      </div>
           </>
         )}
       </main>
