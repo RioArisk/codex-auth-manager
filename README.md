@@ -1,110 +1,95 @@
-# Codex Manager
+# Codex Auth Manager (Codex Manager)
 
-一个用于管理多个 OpenAI Codex 账号的 Windows 桌面应用程序。
+一个用于管理多个 OpenAI Codex 账号的 Windows 桌面应用（Tauri + React）。
 
 ## 功能特点
 
-- 🔄 **一键切换账号** - 快速在多个 Codex 账号之间切换，无需手动修改配置文件
-- 📊 **用量监控** - 实时查看各账号的限额使用情况和重置时间
-- 🔒 **安全存储** - 所有数据本地加密存储，保护您的账号安全
-- 🎯 **智能推荐** - 自动推荐用量最充足的账号
-- ⏰ **自动刷新** - 可配置的定时刷新用量数据
+- 🔄 **一键切换账号**：在多个 Codex 账号之间快速切换，自动写入 `.codex/auth.json`
+- 📊 **用量监控**：从本地 `~/.codex/sessions` 解析 5 小时 / 周限额信息
+- 🎯 **智能推荐**：基于周限额剩余量自动推荐最充足账号
+- ⏰ **自动刷新**：可设置自动刷新间隔（分钟）
+- 🧩 **本地存储**：账号与配置均保存到本地文件
 
 ## 技术栈
 
-- **前端**: React + TypeScript + TailwindCSS
-- **后端**: Tauri (Rust)
-- **状态管理**: Zustand
+- **前端**：React + TypeScript + TailwindCSS
+- **后端**：Tauri (Rust)
+- **状态管理**：Zustand
 
-## 开发环境要求
+## 环境要求（Windows）
 
-### 1. 安装 Node.js
-下载并安装 [Node.js](https://nodejs.org/) (推荐 v18+)
+1. **Node.js**：建议 v18+
+2. **Rust**：通过 rustup 安装
+3. **Tauri 依赖**：
+   - WebView2（Windows 10/11 通常已自带）
+   - Visual Studio Build Tools（安装 “Desktop development with C++”）
 
-### 2. 安装 Rust
-访问 [rustup.rs](https://rustup.rs/) 安装 Rust：
-```powershell
-# Windows PowerShell
-winget install Rustlang.Rustup
-# 或者下载 rustup-init.exe 手动安装
-```
-
-安装完成后重启终端，验证安装：
-```powershell
-rustc --version
-cargo --version
-```
-
-### 3. 安装 Tauri 依赖
-Windows 需要安装 WebView2 和 Visual Studio Build Tools：
-- WebView2: 通常 Windows 10/11 已预装，否则从 [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) 下载
-- Build Tools: 下载 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)，安装时选择 "Desktop development with C++"
-
-## 安装和运行
+## 快速开始
 
 ```bash
-# 进入项目目录
-cd codex-manager
-
 # 安装依赖
 npm install
 
-# 开发模式运行
+# 启动开发（Tauri）
 npm run tauri dev
 
-# 构建生产版本
+# 构建安装包
 npm run tauri build
 ```
 
-## 使用指南
+> 也可以使用 `npm run tauri:dev` / `npm run tauri:build`，效果一致。
+
+## 使用说明
 
 ### 添加账号
 
-1. 点击右上角的 "添加账号" 按钮
+1. 点击右上角的 **“添加账号”**
 2. 选择以下方式之一：
-   - **粘贴 JSON**: 复制 `%USERPROFILE%\.codex\auth.json` 的内容粘贴
-   - **选择文件**: 直接选择 auth.json 文件
-   - **导入当前账号**: 自动读取当前已登录的 Codex 账号
+   - **粘贴 JSON**：复制 `%USERPROFILE%\.codex\auth.json` 内容
+   - **选择文件**：直接选择本地 `auth.json`
+   - **导入当前账号**：自动读取当前已登录的 Codex 配置
 
 ### 切换账号
 
-点击账号卡片上的 "切换到此账号" 按钮，应用会自动：
-1. 将该账号的配置写入 `.codex/auth.json`
+点击账号卡片 **“切换到此账号”**：
+1. 将该账号的配置写入 `%USERPROFILE%\.codex\auth.json`
 2. 标记该账号为当前活动账号
 
 ### 刷新用量
 
-- 点击单个账号卡片上的刷新按钮刷新该账号的用量
-- 点击顶部的 "刷新全部" 按钮刷新所有账号的用量
+- 刷新单个账号：卡片上的刷新按钮
+- 刷新全部账号：顶部 **“刷新全部”**
+
+> 用量数据来自本地 `~/.codex/sessions` 日志。
+> 如果某账号从未使用过 Codex，可能会显示“暂无用量数据”。
 
 ### 设置
 
-点击右上角的齿轮图标打开设置：
-- **自动刷新间隔**: 设置自动刷新用量数据的时间间隔（0 表示禁用）
+- 自动刷新间隔（分钟）：设置为 0 可禁用自动刷新
 
-## 数据存储
+## 数据与隐私
 
-所有数据存储在本地：
-- **账号配置**: `%LOCALAPPDATA%\codex-manager\accounts.json`
-- **Codex 配置**: `%USERPROFILE%\.codex\auth.json`
+数据全部保存在本地文件中（**不会上传**），但目前为 **明文 JSON** 存储：
+
+- **账号列表与配置**：`%LOCALAPPDATA%\codex-manager\accounts.json`
+- **账号凭据**：`%USERPROFILE%\.codex_manager\auths\{accountId}.json`
+- **当前 Codex 配置**：`%USERPROFILE%\.codex\auth.json`
+- **用量来源**：`%USERPROFILE%\.codex\sessions\**\*.jsonl`
+
+## 已知限制
+
+- 用量时间显示目前固定按 **UTC+8** 计算（后续可改为本地时区）
+- 用量解析依赖本地 session 日志，无法主动查询远端
 
 ## 项目结构
 
 ```
 codex-manager/
 ├── src/                    # React 前端源码
-│   ├── components/         # UI 组件
-│   ├── hooks/              # 自定义 React Hooks
-│   ├── stores/             # Zustand 状态管理
-│   ├── types/              # TypeScript 类型定义
-│   └── utils/              # 工具函数
 ├── src-tauri/              # Tauri 后端源码
-│   ├── src/
-│   │   └── lib.rs          # Rust 命令实现
-│   └── tauri.conf.json     # Tauri 配置
 └── package.json
 ```
 
-## 许可证
+## License
 
-MIT License
+当前仓库未附带 LICENSE。若需要开源许可，请补充对应 LICENSE 文件。

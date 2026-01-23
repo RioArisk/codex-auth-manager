@@ -23,6 +23,7 @@ export function useAutoRefresh() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const authCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isRefreshingRef = useRef(false);
+  const autoRefreshAccountIdRef = useRef<string | null>(null);
   
   /**
    * 获取单个账号的用量信息
@@ -161,6 +162,35 @@ export function useAutoRefresh() {
       isRefreshingRef.current = false;
     }
   }, [activeAccountId, fetchAccountUsage, updateUsage]);
+
+  // 如果已登录且能读到 auth.json，自动用最新 session 更新当前账号用量
+  useEffect(() => {
+    if (!activeAccountId) {
+      autoRefreshAccountIdRef.current = null;
+      return;
+    }
+
+    if (autoRefreshAccountIdRef.current === activeAccountId) {
+      return;
+    }
+
+    const activeAccount = accounts.find(account => account.id === activeAccountId);
+    if (!activeAccount) return;
+
+    const runAutoRefresh = async () => {
+      const currentAuthAccountId = await getCurrentAuthAccountId();
+      if (!currentAuthAccountId) return;
+
+      if (activeAccount.accountInfo.accountId !== currentAuthAccountId) {
+        return;
+      }
+
+      autoRefreshAccountIdRef.current = activeAccountId;
+      await refreshSingleAccount(activeAccountId);
+    };
+
+    void runAutoRefresh();
+  }, [accounts, activeAccountId, refreshSingleAccount]);
   
   // 设置自动刷新定时器
   useEffect(() => {
