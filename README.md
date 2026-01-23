@@ -23,6 +23,7 @@
 3. **Tauri 依赖**：
    - WebView2（Windows 10/11 通常已自带）
    - Visual Studio Build Tools（安装 “Desktop development with C++”）
+   - Windows 10/11 SDK（随 VS Build Tools 勾选安装）
 
 ## 快速开始
 
