@@ -6,3 +6,4 @@ export { Header } from './Header';
 export { SettingsModal } from './SettingsModal';
 export { StatsSummary } from './StatsSummary';
 export { UsageBar } from './UsageBar';
+export { Toast } from './Toast';

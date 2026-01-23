@@ -26,7 +26,7 @@ export interface AccountInfo {
 
 // 用量信息
 export interface UsageInfo {
-  contextWindow: {
+  contextWindow?: {
     percentLeft: number;
     used: string;
     total: string;
@@ -40,6 +40,7 @@ export interface UsageInfo {
     resetTime: string;
   };
   lastUpdated: string;
+  sourceFile?: string;
 }
 
 // 存储的账号数据

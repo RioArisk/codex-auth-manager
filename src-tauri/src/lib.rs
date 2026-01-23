@@ -1,7 +1,16 @@
+use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use notify::{EventKind, RecursiveMode, Watcher};
+use serde::{Deserialize, Serialize};
+
+static USAGE_BINDINGS_LOCK: Mutex<()> = Mutex::new(());
+const MIN_VALID_EPOCH_MS: i64 = 946684800000; // 2000-01-01T00:00:00Z
+const MAX_VALID_EPOCH_MS: i64 = 4102444800000; // 2100-01-01T00:00:00Z
 
 /// 获取应用数据目录
 fn get_app_data_dir() -> Result<PathBuf, String> {
@@ -129,6 +138,123 @@ fn get_home_dir() -> Result<String, String> {
         .ok_or_else(|| "Cannot find home directory".to_string())
 }
 
+/// 获取用量绑定映射路径
+fn get_usage_bindings_path() -> Result<PathBuf, String> {
+    let dir = get_app_data_dir()?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("usage-bindings.json"))
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct SessionBinding {
+    session_id: String,
+    created_at: String,
+    file_path: String,
+    bound_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct UsageBindingsStore {
+    version: String,
+    bindings: HashMap<String, Vec<SessionBinding>>,
+}
+
+fn load_usage_bindings_unlocked() -> Result<UsageBindingsStore, String> {
+    let path = get_usage_bindings_path()?;
+    if !path.exists() {
+        return Ok(UsageBindingsStore {
+            version: "1.0.0".to_string(),
+            bindings: HashMap::new(),
+        });
+    }
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let store: UsageBindingsStore = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    Ok(store)
+}
+
+fn save_usage_bindings_unlocked(store: &UsageBindingsStore) -> Result<(), String> {
+    let path = get_usage_bindings_path()?;
+    let data = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    fs::write(&path, data).map_err(|e| e.to_string())
+}
+
+fn update_usage_bindings(account_id: &str, binding: SessionBinding) -> Result<(), String> {
+    let _guard = USAGE_BINDINGS_LOCK.lock().map_err(|_| "Bindings lock poisoned".to_string())?;
+    let mut store = load_usage_bindings_unlocked()?;
+    for (existing_account, existing_entries) in store.bindings.iter() {
+        if existing_account == account_id {
+            continue;
+        }
+        if existing_entries.iter().any(|b| {
+            b.session_id == binding.session_id || b.file_path == binding.file_path
+        }) {
+            return Err("Session file already bound to another account".to_string());
+        }
+    }
+    let entries = store.bindings.entry(account_id.to_string()).or_default();
+    if let Some(existing) = entries.iter_mut().find(|b| b.session_id == binding.session_id) {
+        *existing = binding;
+    } else {
+        entries.push(binding);
+    }
+    entries.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.bound_at.cmp(&b.bound_at)));
+    if entries.len() > 200 {
+        let start = entries.len().saturating_sub(200);
+        entries.drain(0..start);
+    }
+    save_usage_bindings_unlocked(&store)
+}
+
+fn get_latest_bound_session_path(account_id: &str) -> Result<PathBuf, String> {
+    let _guard = USAGE_BINDINGS_LOCK.lock().map_err(|_| "Bindings lock poisoned".to_string())?;
+    let store = load_usage_bindings_unlocked()?;
+    let entries = store
+        .bindings
+        .get(account_id)
+        .ok_or_else(|| "No usage bindings found for account".to_string())?;
+
+    let mut best_path: Option<PathBuf> = None;
+    let mut best_mtime: Option<SystemTime> = None;
+
+    for entry in entries.iter().rev() {
+        let path = PathBuf::from(&entry.file_path);
+        if !path.exists() {
+            continue;
+        }
+        let mtime = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .unwrap_or(UNIX_EPOCH);
+        if best_mtime.map_or(true, |current| mtime > current) {
+            best_mtime = Some(mtime);
+            best_path = Some(path);
+        }
+    }
+
+    best_path.ok_or_else(|| "No valid bound session files found".to_string())
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthTokens {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthConfig {
+    tokens: Option<AuthTokens>,
+}
+
+fn get_current_auth_account_id() -> Result<String, String> {
+    let path = get_codex_auth_path()?;
+    if !path.exists() {
+        return Err("Codex auth.json not found".to_string());
+    }
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let auth: AuthConfig = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    auth.tokens
+        .and_then(|t| t.account_id)
+        .ok_or_else(|| "Missing account_id in auth.json".to_string())
+}
+
 // ==================== 用量解析相关结构 ====================
 
 #[derive(Debug, Deserialize)]
@@ -155,10 +281,11 @@ struct EventMsg {
 #[derive(Debug, Serialize)]
 pub struct UsageData {
     pub five_hour_percent_left: f64,
-    pub five_hour_reset_time: String,
+    pub five_hour_reset_time_ms: i64,
     pub weekly_percent_left: f64,
-    pub weekly_reset_time: String,
+    pub weekly_reset_time_ms: i64,
     pub last_updated: String,
+    pub source_file: Option<String>,
 }
 
 /// 获取 codex sessions 目录路径
@@ -166,6 +293,58 @@ fn get_codex_sessions_dir() -> Result<PathBuf, String> {
     dirs::home_dir()
         .map(|p| p.join(".codex").join("sessions"))
         .ok_or_else(|| "Cannot find home directory".to_string())
+}
+
+fn start_session_watcher() {
+    let sessions_dir = match get_codex_sessions_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            log::warn!("Failed to resolve sessions dir: {}", err);
+            return;
+        }
+    };
+
+    if !sessions_dir.exists() {
+        log::warn!("Sessions directory not found for watcher");
+        return;
+    }
+
+    std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = match notify::recommended_watcher(move |res| {
+            let _ = tx.send(res);
+        }) {
+            Ok(w) => w,
+            Err(err) => {
+                log::error!("Failed to start watcher: {}", err);
+                return;
+            }
+        };
+
+        if let Err(err) = watcher.watch(&sessions_dir, RecursiveMode::Recursive) {
+            log::error!("Failed to watch sessions dir: {}", err);
+            return;
+        }
+
+        for res in rx {
+            let event = match res {
+                Ok(ev) => ev,
+                Err(_) => continue,
+            };
+
+        if !matches!(event.kind, EventKind::Create(_)) {
+            continue;
+        }
+
+        for path in event.paths {
+            if path.extension().map_or(false, |ext| ext == "jsonl") {
+                if let Err(err) = bind_session_file_to_current_auth(&path) {
+                    log::debug!("Bind session skipped: {}", err);
+                }
+            }
+        }
+    }
+    });
 }
 
 /// 查找最新的 session 日志文件
@@ -257,85 +436,130 @@ fn parse_rate_limits_from_file(file_path: &PathBuf) -> Result<UsageData, String>
         .ok_or_else(|| "No primary rate limit found".to_string())?;
     let secondary = rate_limits.secondary
         .ok_or_else(|| "No secondary rate limit found".to_string())?;
-    
-    // 格式化重置时间
-    let five_hour_reset = format_reset_time(primary.resets_at);
-    let weekly_reset = format_reset_time_with_date(secondary.resets_at);
-    
+
+    let primary_used = validate_used_percent(primary.used_percent)?;
+    let secondary_used = validate_used_percent(secondary.used_percent)?;
+    let five_hour_reset_ms = normalize_unix_timestamp_ms(primary.resets_at)?;
+    let weekly_reset_ms = normalize_unix_timestamp_ms(secondary.resets_at)?;
+    let last_updated = fs::metadata(file_path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(epoch_ms_from_system_time)
+        .map(|ms| ms.to_string())
+        .unwrap_or_else(now_epoch_ms_string);
+
     Ok(UsageData {
-        five_hour_percent_left: 100.0 - primary.used_percent,
-        five_hour_reset_time: five_hour_reset,
-        weekly_percent_left: 100.0 - secondary.used_percent,
-        weekly_reset_time: weekly_reset,
-        last_updated: chrono_now(),
+        five_hour_percent_left: 100.0 - primary_used,
+        five_hour_reset_time_ms: five_hour_reset_ms,
+        weekly_percent_left: 100.0 - secondary_used,
+        weekly_reset_time_ms: weekly_reset_ms,
+        last_updated,
+        source_file: Some(file_path.to_string_lossy().to_string()),
     })
 }
 
-/// 格式化时间戳为时间字符串 (HH:MM)
-fn format_reset_time(timestamp: i64) -> String {
-    use std::time::{UNIX_EPOCH, Duration};
-    
-    let reset_time = UNIX_EPOCH + Duration::from_secs(timestamp as u64);
-    
-    // 简单计算小时和分钟
-    if let Ok(duration) = reset_time.duration_since(UNIX_EPOCH) {
-        let secs = duration.as_secs();
-        let hours = (secs / 3600) % 24;
-        let minutes = (secs / 60) % 60;
-        
-        // 调整为本地时区（简化处理，假设 UTC+8）
-        let local_hours = (hours + 8) % 24;
-        return format!("{:02}:{:02}", local_hours, minutes);
+fn now_epoch_ms_string() -> String {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis().to_string(),
+        Err(_) => "0".to_string(),
     }
-    
-    "--:--".to_string()
 }
 
-/// 格式化时间戳为日期时间字符串
-fn format_reset_time_with_date(timestamp: i64) -> String {
-    use std::time::{UNIX_EPOCH, Duration};
-    
-    let reset_time = UNIX_EPOCH + Duration::from_secs(timestamp as u64);
-    
-    if let Ok(duration) = reset_time.duration_since(UNIX_EPOCH) {
-        let secs = duration.as_secs();
-        
-        // 简化的日期计算
-        let days_since_epoch = secs / 86400;
-        let day_of_week = ((days_since_epoch + 4) % 7) as u8; // 1970-01-01 was Thursday (4)
-        
-        let weekday = match day_of_week {
-            0 => "周日",
-            1 => "周一",
-            2 => "周二",
-            3 => "周三",
-            4 => "周四",
-            5 => "周五",
-            6 => "周六",
-            _ => "未知",
+fn epoch_ms_from_system_time(time: SystemTime) -> Option<i64> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_millis()).ok())
+}
+
+fn normalize_unix_timestamp_ms(timestamp: i64) -> Result<i64, String> {
+    if timestamp <= 0 {
+        return Err("Invalid reset timestamp".to_string());
+    }
+
+    let ms = if timestamp >= 1_000_000_000_000 {
+        timestamp
+    } else {
+        timestamp * 1000
+    };
+
+    if ms < MIN_VALID_EPOCH_MS || ms > MAX_VALID_EPOCH_MS {
+        return Err("Reset timestamp out of valid range".to_string());
+    }
+
+    Ok(ms)
+}
+
+fn validate_used_percent(value: f64) -> Result<f64, String> {
+    if value.is_nan() || value < 0.0 || value > 100.0 {
+        return Err("Invalid used_percent in rate_limits".to_string());
+    }
+    Ok(value)
+}
+
+fn parse_session_meta(file_path: &PathBuf) -> Result<(String, String), String> {
+    let file = fs::File::open(file_path)
+        .map_err(|e| format!("Failed to open file: {}", e))?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
         };
-        
-        let hours = (secs / 3600) % 24;
-        let minutes = (secs / 60) % 60;
-        let local_hours = (hours + 8) % 24;
-        
-        return format!("{} {:02}:{:02}", weekday, local_hours, minutes);
+
+        if line.is_empty() {
+            continue;
+        }
+
+        let value: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        if value.get("type").and_then(|v| v.as_str()) == Some("session_meta") {
+            let payload = value
+                .get("payload")
+                .ok_or_else(|| "Missing session payload".to_string())?;
+            let session_id = payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing session id".to_string())?;
+            let created_at = payload
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            return Ok((session_id.to_string(), created_at));
+        }
     }
-    
-    "未知".to_string()
+
+    Err("No session_meta found".to_string())
 }
 
-/// 获取当前时间字符串
-fn chrono_now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    
-    if let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) {
-        let secs = duration.as_secs();
-        let millis = duration.subsec_millis();
-        return format!("{}000", secs).replace("000", &format!("{:03}", millis));
-    }
-    
-    "0".to_string()
+fn bind_session_file_to_account(account_id: &str, file_path: &PathBuf) -> Result<(), String> {
+    let (session_id, created_at) = parse_session_meta(file_path).or_else(|_| {
+        let fallback = fs::metadata(file_path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_else(|| "0".to_string());
+        Ok::<(String, String), String>((file_path.to_string_lossy().to_string(), fallback))
+    })?;
+
+    let binding = SessionBinding {
+        session_id,
+        created_at,
+        file_path: file_path.to_string_lossy().to_string(),
+        bound_at: now_epoch_ms_string(),
+    };
+
+    update_usage_bindings(account_id, binding)
+}
+
+fn bind_session_file_to_current_auth(file_path: &PathBuf) -> Result<(), String> {
+    let account_id = get_current_auth_account_id()?;
+    bind_session_file_to_account(&account_id, file_path)
 }
 
 /// 获取账号的用量信息（通过解析本地 session 日志）
@@ -343,6 +567,38 @@ fn chrono_now() -> String {
 fn get_usage_from_sessions() -> Result<UsageData, String> {
     let latest_file = find_latest_session_file()?;
     parse_rate_limits_from_file(&latest_file)
+}
+
+/// 获取绑定账号的用量信息
+#[tauri::command]
+fn get_bound_usage(account_id: String) -> Result<UsageData, String> {
+    if account_id.is_empty() {
+        return Err("Missing account id".to_string());
+    }
+
+    let path = get_latest_bound_session_path(&account_id)?;
+    let mut data = parse_rate_limits_from_file(&path)?;
+    data.source_file = Some(path.to_string_lossy().to_string());
+    Ok(data)
+}
+
+fn json_contains_string(value: &serde_json::Value, needle: &str) -> bool {
+    match value {
+        serde_json::Value::String(s) => s == needle,
+        serde_json::Value::Array(items) => items.iter().any(|v| json_contains_string(v, needle)),
+        serde_json::Value::Object(map) => map.values().any(|v| json_contains_string(v, needle)),
+        _ => false,
+    }
+}
+
+/// 从指定文件解析用量信息
+#[tauri::command]
+fn get_usage_from_file(file_path: String) -> Result<UsageData, String> {
+    let path = PathBuf::from(file_path);
+    if !path.exists() {
+        return Err("Usage source file not found".to_string());
+    }
+    parse_rate_limits_from_file(&path)
 }
 
 /// 获取指定账号的用量信息
@@ -402,14 +658,25 @@ fn get_account_usage(account_email: String) -> Result<UsageData, String> {
             if line.is_empty() {
                 continue;
             }
-            
-            // 检查是否包含目标账号邮箱
-            if line.contains(&account_email) {
-                found_account = true;
+
+            let value: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            // 仅在明确的上下文里匹配邮箱，避免误判
+            if !found_account && !account_email.is_empty() {
+                if let Some(entry_type) = value.get("type").and_then(|v| v.as_str()) {
+                    if entry_type == "session_meta" || entry_type == "turn_context" {
+                        if json_contains_string(&value, &account_email) {
+                            found_account = true;
+                        }
+                    }
+                }
             }
-            
+
             // 解析 rate_limits
-            if let Ok(event) = serde_json::from_str::<EventMsg>(&line) {
+            if let Ok(event) = serde_json::from_value::<EventMsg>(value) {
                 if event.msg_type == "event_msg" || event.msg_type == "token_count" {
                     if let Some(payload) = event.payload {
                         if let Some(rate_limits) = payload.get("rate_limits") {
@@ -426,12 +693,24 @@ fn get_account_usage(account_email: String) -> Result<UsageData, String> {
         if found_account {
             if let Some(rate_limits) = latest_rate_limits {
                 if let (Some(primary), Some(secondary)) = (rate_limits.primary, rate_limits.secondary) {
+                    let primary_used = validate_used_percent(primary.used_percent)?;
+                    let secondary_used = validate_used_percent(secondary.used_percent)?;
+                    let five_hour_reset_ms = normalize_unix_timestamp_ms(primary.resets_at)?;
+                    let weekly_reset_ms = normalize_unix_timestamp_ms(secondary.resets_at)?;
+                    let last_updated = fs::metadata(file_path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(epoch_ms_from_system_time)
+                        .map(|ms| ms.to_string())
+                        .unwrap_or_else(now_epoch_ms_string);
+
                     return Ok(UsageData {
-                        five_hour_percent_left: 100.0 - primary.used_percent,
-                        five_hour_reset_time: format_reset_time(primary.resets_at),
-                        weekly_percent_left: 100.0 - secondary.used_percent,
-                        weekly_reset_time: format_reset_time_with_date(secondary.resets_at),
-                        last_updated: chrono_now(),
+                        five_hour_percent_left: 100.0 - primary_used,
+                        five_hour_reset_time_ms: five_hour_reset_ms,
+                        weekly_percent_left: 100.0 - secondary_used,
+                        weekly_reset_time_ms: weekly_reset_ms,
+                        last_updated,
+                        source_file: Some(file_path.to_string_lossy().to_string()),
                     });
                 }
             }
@@ -454,6 +733,7 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            start_session_watcher();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -467,6 +747,8 @@ pub fn run() {
             read_file_content,
             get_home_dir,
             get_usage_from_sessions,
+            get_bound_usage,
+            get_usage_from_file,
             get_account_usage,
         ])
         .run(tauri::generate_context!())

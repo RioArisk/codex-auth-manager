@@ -25,3 +25,4 @@ tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 dirs = "5.0"
 tokio = { version = "1", features = ["process", "io-util"] }
+notify = "6.1.1"

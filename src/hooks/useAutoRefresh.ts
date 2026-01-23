@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useAccountStore } from '../stores/useAccountStore';
 import { invoke } from '@tauri-apps/api/core';
-import { switchToAccount as switchAccountUtil, getCurrentAuthAccountId } from '../utils/storage';
+import { getCurrentAuthAccountId } from '../utils/storage';
 import type { UsageInfo } from '../types';
 
 /**
@@ -9,10 +9,11 @@ import type { UsageInfo } from '../types';
  */
 interface RustUsageData {
   five_hour_percent_left: number;
-  five_hour_reset_time: string;
+  five_hour_reset_time_ms: number;
   weekly_percent_left: number;
-  weekly_reset_time: string;
+  weekly_reset_time_ms: number;
   last_updated: string;
+  source_file?: string;
 }
 
 /**
@@ -24,144 +25,119 @@ export function useAutoRefresh() {
   const authCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isRefreshingRef = useRef(false);
   const autoRefreshAccountIdRef = useRef<string | null>(null);
+
+  type RefreshStatus = 'success' | 'no-usage' | 'skipped';
+  type RefreshResult = { status: RefreshStatus };
+  type RefreshAllResult = { updated: number; missing: number; skipped: boolean };
+
+  const formatResetTime = (resetTimeMs: number, includeWeekday: boolean): string => {
+    if (!Number.isFinite(resetTimeMs) || resetTimeMs <= 0) {
+      throw new Error('Invalid reset timestamp');
+    }
+
+    const date = new Date(resetTimeMs);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error('Invalid reset timestamp');
+    }
+
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    if (!includeWeekday) {
+      return `${hours}:${minutes}`;
+    }
+    const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    return `${weekdays[date.getDay()]} ${hours}:${minutes}`;
+  };
+
+  const buildUsageInfo = (usageData: RustUsageData, fallbackSourceFile?: string): UsageInfo => ({
+    fiveHourLimit: {
+      percentLeft: Math.round(usageData.five_hour_percent_left),
+      resetTime: formatResetTime(usageData.five_hour_reset_time_ms, false),
+    },
+    weeklyLimit: {
+      percentLeft: Math.round(usageData.weekly_percent_left),
+      resetTime: formatResetTime(usageData.weekly_reset_time_ms, true),
+    },
+    lastUpdated: usageData.last_updated,
+    sourceFile: usageData.source_file ?? fallbackSourceFile,
+  });
   
   /**
    * 获取单个账号的用量信息
    * 通过解析本地 ~/.codex/sessions 日志文件获取真实数据
-   * 
+   *
    * 重要逻辑：
-   * - 活动账号：可以使用最新 session 的数据（因为它就是用活动账号创建的）
-   * - 非活动账号：只能使用该账号自己的历史数据，不能混用其他账号的数据
+   * - 后端会把新建 session 文件与当前 auth.json 绑定
+   * - 查询时直接使用该账号最新绑定的 session 文件
    */
   const fetchAccountUsage = useCallback(async (accountId: string): Promise<UsageInfo | null> => {
     try {
       // 找到账号信息
       const account = accounts.find(a => a.id === accountId);
       if (!account) return null;
-      
-      const isActiveAccount = accountId === activeAccountId;
-      
-      // 先尝试通过邮箱查找该账号特定的用量数据
-      try {
-        const usageData = await invoke<RustUsageData>('get_account_usage', {
-          accountEmail: account.accountInfo.email,
-        });
-        
-        return {
-          contextWindow: {
-            percentLeft: 100, // 从日志中暂时无法获取，设为默认值
-            used: '0K',
-            total: '258K',
-          },
-          fiveHourLimit: {
-            percentLeft: Math.round(usageData.five_hour_percent_left),
-            resetTime: usageData.five_hour_reset_time,
-          },
-          weeklyLimit: {
-            percentLeft: Math.round(usageData.weekly_percent_left),
-            resetTime: usageData.weekly_reset_time,
-          },
-          lastUpdated: new Date().toISOString(),
-        };
-      } catch (accountError) {
-        console.warn(`No specific data for ${account.accountInfo.email}`);
-        
-        // 只有活动账号才可以使用最新 session 的数据
-        // 因为最新 session 一定是用活动账号创建的
-        if (isActiveAccount) {
-          try {
-            const usageData = await invoke<RustUsageData>('get_usage_from_sessions');
-            
-            return {
-              contextWindow: {
-                percentLeft: 100,
-                used: '0K',
-                total: '258K',
-              },
-              fiveHourLimit: {
-                percentLeft: Math.round(usageData.five_hour_percent_left),
-                resetTime: usageData.five_hour_reset_time,
-              },
-              weeklyLimit: {
-                percentLeft: Math.round(usageData.weekly_percent_left),
-                resetTime: usageData.weekly_reset_time,
-              },
-              lastUpdated: new Date().toISOString(),
-            };
-          } catch (sessionError) {
-            console.warn('No session data available for active account:', sessionError);
-            return null;
-          }
-        } else {
-          // 非活动账号：如果找不到该账号的历史数据，返回 null
-          // 不要使用其他账号的数据，避免数据混淆
-          console.warn(`Account ${account.accountInfo.email} has no usage history. Need to use codex with this account first.`);
-          return null;
-        }
-      }
+      const usageData = await invoke<RustUsageData>('get_bound_usage', {
+        accountId: account.accountInfo.accountId,
+      });
+      return buildUsageInfo(usageData);
     } catch (error) {
       console.error(`Failed to fetch usage for account ${accountId}:`, error);
       return null;
     }
-  }, [accounts, activeAccountId]);
+  }, [accounts]);
   
   /**
    * 刷新所有账号的用量
    */
-  const refreshAllUsage = useCallback(async () => {
-    if (isRefreshingRef.current || accounts.length === 0) return;
+  const refreshAllUsage = useCallback(async (): Promise<RefreshAllResult> => {
+    if (isRefreshingRef.current || accounts.length === 0) {
+      return { updated: 0, missing: 0, skipped: true };
+    }
     
     isRefreshingRef.current = true;
-    
-    // 检查当前是否有登录账号（auth.json 是否存在）
-    const currentAuthId = await getCurrentAuthAccountId();
+    let updated = 0;
+    let missing = 0;
     
     try {
       for (const account of accounts) {
         const usage = await fetchAccountUsage(account.id);
         if (usage) {
           await updateUsage(account.id, usage);
+          updated += 1;
+        } else {
+          missing += 1;
         }
         // 添加小延迟避免过快切换
         await new Promise(resolve => setTimeout(resolve, 500));
       }
-      
-      // 只有当刷新前确实有登录账号时，才恢复原来的活动账号
-      // 如果 auth.json 不存在（用户已退出登录），不要自动创建
-      if (currentAuthId && activeAccountId) {
-        await switchAccountUtil(activeAccountId);
-      }
+      return { updated, missing, skipped: false };
     } finally {
       isRefreshingRef.current = false;
     }
-  }, [accounts, activeAccountId, fetchAccountUsage, updateUsage]);
+  }, [accounts, fetchAccountUsage, updateUsage]);
   
   /**
    * 刷新单个账号的用量
    */
-  const refreshSingleAccount = useCallback(async (accountId: string) => {
-    if (isRefreshingRef.current) return;
+  const refreshSingleAccount = useCallback(async (accountId: string): Promise<RefreshResult> => {
+    if (isRefreshingRef.current) {
+      return { status: 'skipped' };
+    }
     
     isRefreshingRef.current = true;
-    
-    // 检查当前是否有登录账号（auth.json 是否存在）
-    const currentAuthId = await getCurrentAuthAccountId();
+    let status: RefreshStatus = 'no-usage';
     
     try {
       const usage = await fetchAccountUsage(accountId);
       if (usage) {
         await updateUsage(accountId, usage);
+        status = 'success';
       }
-      
-      // 只有当刷新前确实有登录账号时，才恢复原来的活动账号
-      // 如果 auth.json 不存在（用户已退出登录），不要自动创建
-      if (currentAuthId && activeAccountId && activeAccountId !== accountId) {
-        await switchAccountUtil(activeAccountId);
-      }
+
+      return { status };
     } finally {
       isRefreshingRef.current = false;
     }
-  }, [activeAccountId, fetchAccountUsage, updateUsage]);
+  }, [fetchAccountUsage, updateUsage]);
 
   // 如果已登录且能读到 auth.json，自动用最新 session 更新当前账号用量
   useEffect(() => {
@@ -206,7 +182,7 @@ export function useAutoRefresh() {
     // 设置新的定时器（间隔以分钟为单位）
     const intervalMs = config.autoRefreshInterval * 60 * 1000;
     intervalRef.current = setInterval(() => {
-      refreshAllUsage();
+      void refreshAllUsage();
     }, intervalMs);
     
     return () => {

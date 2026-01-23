@@ -72,12 +72,21 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes toastPop {
+  from { opacity: 0; transform: translate3d(0, -8px, 0) scale(0.98); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.35s ease-out forwards;
 }
 
 .page-enter {
   animation: slideUp 0.4s ease-out both;
+}
+
+.toast-pop {
+  animation: toastPop 0.25s ease-out both;
 }
 
 input,

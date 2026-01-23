@@ -6,7 +6,7 @@ interface AccountCardProps {
   account: StoredAccount;
   onSwitch: () => void;
   onDelete: () => void;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
 }
 
 const planTypeColors: Record<string, string> = {
@@ -37,7 +37,9 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   return (
     <div
       className={`flex flex-col lg:flex-row lg:items-center gap-5 px-4 py-4 rounded-2xl border border-slate-100 bg-white/90 transition-colors ${
-        isActive ? 'bg-blue-50/70 border-blue-100' : 'hover:bg-slate-50'
+        isActive
+          ? 'bg-[rgba(47,107,255,0.08)] border-[rgba(47,107,255,0.32)] ring-1 ring-[rgba(47,107,255,0.35)] shadow-[0_16px_34px_rgba(47,107,255,0.12)]'
+          : 'hover:bg-slate-50'
       }`}
     >
       <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -98,7 +100,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 justify-start lg:justify-end">
+      <div className="flex items-center gap-2 justify-start lg:justify-end lg:w-[164px] lg:flex-shrink-0">
         {!isActive && (
           <button
             onClick={onSwitch}

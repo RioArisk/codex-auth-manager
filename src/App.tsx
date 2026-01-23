@@ -10,6 +10,7 @@ import {
   Header,
   SettingsModal,
   StatsSummary,
+  Toast,
 } from './components';
 
 function App() {
@@ -34,7 +35,9 @@ function App() {
   const [isInitializing, setIsInitializing] = useState(false);
   const [shouldInitialRefresh, setShouldInitialRefresh] = useState(false);
   const [hasLoadedAccounts, setHasLoadedAccounts] = useState(false);
+  const [toast, setToast] = useState<{ message: string; tone: 'success' | 'warning' } | null>(null);
   const autoImportInFlightRef = useRef(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
     accountId: string | null;
@@ -121,6 +124,24 @@ function App() {
     }
   }, [error, clearError]);
 
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showToast = (message: string, tone: 'success' | 'warning' = 'success') => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToast({ message, tone });
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+    }, 2200);
+  };
+
   const handleAddAccount = async (authJson: string, alias?: string) => {
     await addAccount(authJson, alias);
   };
@@ -149,8 +170,23 @@ function App() {
     setDeleteConfirm({ isOpen: false, accountId: null, accountName: '' });
   };
 
+  const handleRefreshAll = async () => {
+    const result = await refreshAllUsage();
+    if (result.skipped) return;
+    if (result.updated > 0) {
+      showToast('刷新成功', 'success');
+    } else {
+      showToast('未找到用量信息，请对话一次', 'warning');
+    }
+  };
+
   const handleRefresh = async (accountId: string) => {
-    await refreshSingleAccount(accountId);
+    const result = await refreshSingleAccount(accountId);
+    if (result.status === 'success') {
+      showToast('刷新成功', 'success');
+    } else if (result.status === 'no-usage') {
+      showToast('未找到用量信息，请对话一次', 'warning');
+    }
   };
 
   const activeAccount = accounts.find((account) => account.isActive);
@@ -165,7 +201,7 @@ function App() {
         activeName={activeName}
         onAddAccount={() => setShowAddModal(true)}
         onSyncAccount={handleSyncAccount}
-        onRefreshAll={refreshAllUsage}
+        onRefreshAll={handleRefreshAll}
         onOpenSettings={() => setShowSettings(true)}
         isLoading={isLoading}
       />
@@ -280,6 +316,13 @@ function App() {
         onConfirm={handleConfirmDelete}
         onCancel={() => setDeleteConfirm({ isOpen: false, accountId: null, accountName: '' })}
       />
+
+      {/* 右上角提示 */}
+      {toast && (
+        <div className="fixed top-6 right-6 z-50 flex flex-col items-end gap-2 pointer-events-none">
+          <Toast message={toast.message} tone={toast.tone} />
+        </div>
+      )}
 
       {/* 底部状态栏 */}
       <footer className="fixed bottom-0 left-0 right-0 bg-white/70 border-t border-[var(--dash-border)] py-2 px-5 backdrop-blur">

@@ -5,7 +5,7 @@ interface HeaderProps {
   activeName?: string;
   onAddAccount: () => void;
   onSyncAccount: () => void;
-  onRefreshAll: () => void;
+  onRefreshAll: () => void | Promise<void>;
   onOpenSettings: () => void;
   isLoading: boolean;
 }
