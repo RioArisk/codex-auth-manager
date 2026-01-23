@@ -332,7 +332,7 @@ fn start_session_watcher() {
                 Err(_) => continue,
             };
 
-        if !matches!(event.kind, EventKind::Create(_)) {
+        if !matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
             continue;
         }
 
