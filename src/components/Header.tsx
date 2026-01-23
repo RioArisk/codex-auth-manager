@@ -4,6 +4,7 @@ interface HeaderProps {
   accountCount: number;
   activeName?: string;
   onAddAccount: () => void;
+  onSyncAccount: () => void;
   onRefreshAll: () => void;
   onOpenSettings: () => void;
   isLoading: boolean;
@@ -13,6 +14,7 @@ export const Header: React.FC<HeaderProps> = ({
   accountCount,
   activeName,
   onAddAccount,
+  onSyncAccount,
   onRefreshAll,
   onOpenSettings,
   isLoading,
@@ -89,6 +91,17 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="text-sm hidden md:inline">刷新用量</span>
               </button>
             )}
+
+            <button
+              onClick={onSyncAccount}
+              disabled={isLoading}
+              className="h-10 px-4 rounded-full bg-blue-50 text-blue-600 text-sm font-medium transition-colors hover:bg-blue-100 disabled:bg-slate-200 disabled:text-slate-400 flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              同步当前账号
+            </button>
 
             <button
               onClick={onAddAccount}

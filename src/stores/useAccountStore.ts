@@ -27,6 +27,7 @@ interface AccountState {
   updateUsage: (accountId: string, usage: UsageInfo) => Promise<void>;
   updateConfig: (config: Partial<AppConfig>) => Promise<void>;
   refreshAllUsage: () => Promise<void>;
+  setError: (message: string) => void;
   clearError: () => void;
 }
 
@@ -37,6 +38,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     autoRefreshInterval: 10,
     codexPath: 'codex',
     theme: 'dark',
+    hasInitialized: false,
   },
   isLoading: false,
   error: null,
@@ -199,5 +201,6 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     console.log('Refreshing all usage...');
   },
   
+  setError: (message: string) => set({ error: message }),
   clearError: () => set({ error: null }),
 }));

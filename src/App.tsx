@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAccountStore } from './stores/useAccountStore';
 import { useAutoRefresh } from './hooks';
+import { invoke } from '@tauri-apps/api/core';
 import {
   AccountCard,
   AddAccountModal,
@@ -22,6 +23,7 @@ function App() {
     removeAccount,
     switchToAccount,
     updateConfig,
+    setError,
     clearError,
   } = useAccountStore();
 
@@ -29,6 +31,10 @@ function App() {
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [shouldInitialRefresh, setShouldInitialRefresh] = useState(false);
+  const [hasLoadedAccounts, setHasLoadedAccounts] = useState(false);
+  const autoImportInFlightRef = useRef(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
     accountId: string | null;
@@ -40,8 +46,73 @@ function App() {
   });
 
   useEffect(() => {
-    loadAccounts();
+    let active = true;
+
+    const runLoad = async () => {
+      await loadAccounts();
+      if (active) {
+        setHasLoadedAccounts(true);
+      }
+    };
+
+    void runLoad();
+
+    return () => {
+      active = false;
+    };
   }, [loadAccounts]);
+
+  useEffect(() => {
+    if (!hasLoadedAccounts) return;
+
+    if (accounts.length > 0) {
+      if (!config.hasInitialized) {
+        void updateConfig({ hasInitialized: true });
+      }
+      setIsInitializing(false);
+      return;
+    }
+
+    if (config.hasInitialized) {
+      setIsInitializing(false);
+      return;
+    }
+
+    if (autoImportInFlightRef.current) {
+      return;
+    }
+
+    autoImportInFlightRef.current = true;
+    setIsInitializing(true);
+
+    const runAutoImport = async () => {
+      try {
+        const authJson = await invoke<string>('read_codex_auth');
+        await addAccount(authJson);
+        setShouldInitialRefresh(true);
+      } catch {
+        // No local auth or invalid auth; fall back to empty state.
+      } finally {
+        try {
+          await updateConfig({ hasInitialized: true });
+        } catch {
+          // Ignore config update failures for initialization.
+        }
+        setIsInitializing(false);
+        autoImportInFlightRef.current = false;
+      }
+    };
+
+    void runAutoImport();
+  }, [accounts.length, addAccount, config.hasInitialized, hasLoadedAccounts, updateConfig]);
+
+  useEffect(() => {
+    if (!shouldInitialRefresh || accounts.length === 0) return;
+
+    const targetId = accounts.find((account) => account.isActive)?.id ?? accounts[0].id;
+    void refreshSingleAccount(targetId);
+    setShouldInitialRefresh(false);
+  }, [accounts, refreshSingleAccount, shouldInitialRefresh]);
 
   useEffect(() => {
     if (error) {
@@ -52,6 +123,15 @@ function App() {
 
   const handleAddAccount = async (authJson: string, alias?: string) => {
     await addAccount(authJson, alias);
+  };
+
+  const handleSyncAccount = async () => {
+    try {
+      const authJson = await invoke<string>('read_codex_auth');
+      await addAccount(authJson);
+    } catch {
+      setError('未找到当前Codex配置文件。请确保已登录Codex。');
+    }
   };
 
   const handleDeleteClick = (accountId: string, accountName: string) => {
@@ -84,6 +164,7 @@ function App() {
         accountCount={accounts.length}
         activeName={activeName}
         onAddAccount={() => setShowAddModal(true)}
+        onSyncAccount={handleSyncAccount}
         onRefreshAll={refreshAllUsage}
         onOpenSettings={() => setShowSettings(true)}
         isLoading={isLoading}
@@ -108,7 +189,19 @@ function App() {
         )}
 
         {/* 加载状态 */}
-        {isLoading && accounts.length === 0 && (
+        {isInitializing && accounts.length === 0 && (
+          <div className="flex items-center justify-center py-20">
+            <div className="flex items-center gap-2 text-[var(--dash-text-secondary)]">
+              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <span className="text-sm">初始化中...</span>
+            </div>
+          </div>
+        )}
+
+        {isLoading && accounts.length === 0 && !isInitializing && (
           <div className="flex items-center justify-center py-20">
             <div className="flex items-center gap-2 text-[var(--dash-text-secondary)]">
               <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -121,7 +214,7 @@ function App() {
         )}
 
         {/* 空状态 */}
-        {!isLoading && accounts.length === 0 && (
+        {hasLoadedAccounts && !isLoading && !isInitializing && accounts.length === 0 && (
           <EmptyState onAddAccount={() => setShowAddModal(true)} />
         )}
 

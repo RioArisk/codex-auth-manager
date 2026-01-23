@@ -6,6 +6,7 @@ const DEFAULT_CONFIG: AppConfig = {
   autoRefreshInterval: 10, // 10分钟
   codexPath: 'codex',
   theme: 'dark',
+  hasInitialized: false,
 };
 
 const DEFAULT_STORE: AccountsStore = {
