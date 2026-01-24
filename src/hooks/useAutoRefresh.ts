@@ -1,23 +1,30 @@
-import { useEffect, useRef, useCallback } from 'react';
+﻿import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAccountStore } from '../stores/useAccountStore';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentAuthAccountId } from '../utils/storage';
 import type { UsageInfo } from '../types';
 
 /**
- * Rust 后端返回的用量数据结构
+ * Rust 鍚庣杩斿洖鐨勭敤閲忔暟鎹粨鏋?
  */
 interface RustUsageData {
   five_hour_percent_left: number;
   five_hour_reset_time_ms: number;
   weekly_percent_left: number;
   weekly_reset_time_ms: number;
+  code_review_percent_left?: number;
+  code_review_reset_time_ms?: number;
   last_updated: string;
-  source_file?: string;
+}
+
+interface RustUsageResult {
+  status: 'ok' | 'missing_account_id' | 'missing_token' | 'no_codex_access' | 'no_usage' | 'error';
+  message?: string;
+  plan_type?: string;
+  usage?: RustUsageData;
 }
 
 /**
- * 自动刷新用量数据的Hook
+ * 鑷姩鍒锋柊鐢ㄩ噺鏁版嵁鐨凥ook
  */
 export function useAutoRefresh() {
   const { accounts, config, updateUsage, activeAccountId, syncCurrentAccount } = useAccountStore();
@@ -25,9 +32,17 @@ export function useAutoRefresh() {
   const authCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isRefreshingRef = useRef(false);
   const autoRefreshAccountIdRef = useRef<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  type RefreshStatus = 'success' | 'no-usage' | 'skipped';
-  type RefreshResult = { status: RefreshStatus };
+  type RefreshStatus =
+    | 'success'
+    | 'no-usage'
+    | 'missing-account-id'
+    | 'missing-token'
+    | 'no-codex-access'
+    | 'error'
+    | 'skipped';
+  type RefreshResult = { status: RefreshStatus; message?: string };
   type RefreshAllResult = { updated: number; missing: number; skipped: boolean };
 
   const formatResetTime = (resetTimeMs: number, includeWeekday: boolean): string => {
@@ -45,11 +60,14 @@ export function useAutoRefresh() {
     if (!includeWeekday) {
       return `${hours}:${minutes}`;
     }
-    const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-    return `${weekdays[date.getDay()]} ${hours}:${minutes}`;
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${month}-${day} ${hours}:${minutes}`;
   };
 
-  const buildUsageInfo = (usageData: RustUsageData, fallbackSourceFile?: string): UsageInfo => ({
+  const buildUsageInfo = (usageData: RustUsageData, planType?: string): UsageInfo => ({
+    status: 'ok',
+    planType,
     fiveHourLimit: {
       percentLeft: Math.round(usageData.five_hour_percent_left),
       resetTime: formatResetTime(usageData.five_hour_reset_time_ms, false),
@@ -58,35 +76,77 @@ export function useAutoRefresh() {
       percentLeft: Math.round(usageData.weekly_percent_left),
       resetTime: formatResetTime(usageData.weekly_reset_time_ms, true),
     },
+    codeReviewLimit: Number.isFinite(usageData.code_review_percent_left) &&
+      Number.isFinite(usageData.code_review_reset_time_ms)
+      ? {
+          percentLeft: Math.round(usageData.code_review_percent_left as number),
+          resetTime: formatResetTime(usageData.code_review_reset_time_ms as number, false),
+        }
+      : undefined,
     lastUpdated: usageData.last_updated,
-    sourceFile: usageData.source_file ?? fallbackSourceFile,
+  });
+
+  const buildStatusUsageInfo = (result: RustUsageResult): UsageInfo => ({
+    status: result.status,
+    message: result.message,
+    planType: result.plan_type,
+    lastUpdated: new Date().toISOString(),
   });
   
   /**
    * 获取单个账号的用量信息
-   * 通过解析本地 ~/.codex/sessions 日志文件获取真实数据
-   *
-   * 重要逻辑：
-   * - 后端会把新建 session 文件与当前 auth.json 绑定
-   * - 查询时直接使用该账号最新绑定的 session 文件
+   * 通过 wham/usage API 获取 Codex quota
    */
-  const fetchAccountUsage = useCallback(async (accountId: string): Promise<UsageInfo | null> => {
+  const fetchAccountUsage = useCallback(async (accountId: string): Promise<{
+    usage: UsageInfo | null;
+    status: RefreshStatus;
+  }> => {
     try {
-      // 找到账号信息
-      const account = accounts.find(a => a.id === accountId);
-      if (!account) return null;
-      const usageData = await invoke<RustUsageData>('get_bound_usage', {
-        accountId: account.accountInfo.accountId,
+      const usageResult = await invoke<RustUsageResult>('get_codex_wham_usage', {
+        accountId,
+        proxyEnabled: config.proxyEnabled,
+        proxyUrl: config.proxyUrl,
       });
-      return buildUsageInfo(usageData);
+
+      if (usageResult.status === 'ok' && usageResult.usage) {
+        return {
+          usage: buildUsageInfo(usageResult.usage, usageResult.plan_type),
+          status: 'success',
+        };
+      }
+
+      if (usageResult.status === 'no_usage') {
+        return { usage: buildStatusUsageInfo(usageResult), status: 'no-usage' };
+      }
+
+      if (usageResult.status === 'missing_account_id') {
+        return { usage: buildStatusUsageInfo(usageResult), status: 'missing-account-id' };
+      }
+
+      if (usageResult.status === 'missing_token') {
+        return { usage: buildStatusUsageInfo(usageResult), status: 'missing-token' };
+      }
+
+      if (usageResult.status === 'no_codex_access') {
+        return { usage: buildStatusUsageInfo(usageResult), status: 'no-codex-access' };
+      }
+
+      return { usage: buildStatusUsageInfo(usageResult), status: 'error' };
     } catch (error) {
       console.error(`Failed to fetch usage for account ${accountId}:`, error);
-      return null;
+      return {
+        usage: {
+          status: 'error',
+          message: error instanceof Error ? error.message : 'wham/usage 请求失败',
+          lastUpdated: new Date().toISOString(),
+        },
+        status: 'error',
+      };
     }
-  }, [accounts]);
+  }, [config.proxyEnabled, config.proxyUrl]);
   
   /**
-   * 刷新所有账号的用量
+   * 鍒锋柊鎵€鏈夎处鍙风殑鐢ㄩ噺
    */
   const refreshAllUsage = useCallback(async (): Promise<RefreshAllResult> => {
     if (isRefreshingRef.current || accounts.length === 0) {
@@ -94,29 +154,33 @@ export function useAutoRefresh() {
     }
     
     isRefreshingRef.current = true;
+    setIsRefreshing(true);
     let updated = 0;
     let missing = 0;
     
     try {
       for (const account of accounts) {
-        const usage = await fetchAccountUsage(account.id);
-        if (usage) {
+        const { usage, status } = await fetchAccountUsage(account.id);
+        if (status === 'success' && usage) {
           await updateUsage(account.id, usage);
+        }
+        if (status === 'success') {
           updated += 1;
         } else {
           missing += 1;
         }
-        // 添加小延迟避免过快切换
+        // 娣诲姞灏忓欢杩熼伩鍏嶈繃蹇垏鎹?
         await new Promise(resolve => setTimeout(resolve, 500));
       }
       return { updated, missing, skipped: false };
     } finally {
       isRefreshingRef.current = false;
+      setIsRefreshing(false);
     }
   }, [accounts, fetchAccountUsage, updateUsage]);
   
   /**
-   * 刷新单个账号的用量
+   * 鍒锋柊鍗曚釜璐﹀彿鐨勭敤閲?
    */
   const refreshSingleAccount = useCallback(async (accountId: string): Promise<RefreshResult> => {
     if (isRefreshingRef.current) {
@@ -124,22 +188,26 @@ export function useAutoRefresh() {
     }
     
     isRefreshingRef.current = true;
+    setIsRefreshing(true);
     let status: RefreshStatus = 'no-usage';
+    let message: string | undefined;
     
     try {
-      const usage = await fetchAccountUsage(accountId);
-      if (usage) {
+      const { usage, status: fetchStatus } = await fetchAccountUsage(accountId);
+      status = fetchStatus === 'success' ? 'success' : fetchStatus;
+      message = usage?.message;
+
+      if (status === 'success' && usage) {
         await updateUsage(accountId, usage);
-        status = 'success';
       }
 
-      return { status };
+      return { status, message };
     } finally {
       isRefreshingRef.current = false;
+      setIsRefreshing(false);
     }
   }, [fetchAccountUsage, updateUsage]);
-
-  // 如果已登录且能读到 auth.json，自动用最新 session 更新当前账号用量
+  // 当前活跃账号变化时自动刷新 quota
   useEffect(() => {
     if (!activeAccountId) {
       autoRefreshAccountIdRef.current = null;
@@ -154,13 +222,6 @@ export function useAutoRefresh() {
     if (!activeAccount) return;
 
     const runAutoRefresh = async () => {
-      const currentAuthAccountId = await getCurrentAuthAccountId();
-      if (!currentAuthAccountId) return;
-
-      if (activeAccount.accountInfo.accountId !== currentAuthAccountId) {
-        return;
-      }
-
       autoRefreshAccountIdRef.current = activeAccountId;
       await refreshSingleAccount(activeAccountId);
     };
@@ -168,18 +229,18 @@ export function useAutoRefresh() {
     void runAutoRefresh();
   }, [accounts, activeAccountId, refreshSingleAccount]);
   
-  // 设置自动刷新定时器
+  // 璁剧疆鑷姩鍒锋柊瀹氭椂鍣?
   useEffect(() => {
     if (config.autoRefreshInterval <= 0 || accounts.length === 0) {
       return;
     }
     
-    // 清除旧的定时器
+    // 娓呴櫎鏃х殑瀹氭椂鍣?
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
     }
     
-    // 设置新的定时器（间隔以分钟为单位）
+    // 璁剧疆鏂扮殑瀹氭椂鍣紙闂撮殧浠ュ垎閽熶负鍗曚綅锛?
     const intervalMs = config.autoRefreshInterval * 60 * 1000;
     intervalRef.current = setInterval(() => {
       void refreshAllUsage();
@@ -191,17 +252,15 @@ export function useAutoRefresh() {
       }
     };
   }, [config.autoRefreshInterval, accounts.length, refreshAllUsage]);
-  
-  // 设置 auth.json 检测定时器（每30秒检测一次）
-  // 用于检测外部登录/登出操作并同步前端状态
+  // 当前活跃账号变化时自动刷新 quota
+  // 鐢ㄤ簬妫€娴嬪閮ㄧ櫥褰?鐧诲嚭鎿嶄綔骞跺悓姝ュ墠绔姸鎬?
   useEffect(() => {
-    // 清除旧的定时器
+    // 娓呴櫎鏃х殑瀹氭椂鍣?
     if (authCheckIntervalRef.current) {
       clearInterval(authCheckIntervalRef.current);
     }
-    
-    // 每30秒检测一次 auth.json 状态
-    const AUTH_CHECK_INTERVAL = 30 * 1000; // 30秒
+  // 当前活跃账号变化时自动刷新 quota
+    const AUTH_CHECK_INTERVAL = 30 * 1000; // 30绉?
     authCheckIntervalRef.current = setInterval(() => {
       syncCurrentAccount();
     }, AUTH_CHECK_INTERVAL);
@@ -216,8 +275,21 @@ export function useAutoRefresh() {
   return {
     refreshAllUsage,
     refreshSingleAccount,
-    isRefreshing: isRefreshingRef.current,
+    isRefreshing,
   };
 }
 
 export default useAutoRefresh;
+
+
+
+
+
+
+
+
+
+
+
+
+

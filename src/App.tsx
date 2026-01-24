@@ -28,7 +28,7 @@ function App() {
     clearError,
   } = useAccountStore();
 
-  const { refreshAllUsage, refreshSingleAccount } = useAutoRefresh();
+  const { refreshAllUsage, refreshSingleAccount, isRefreshing } = useAutoRefresh();
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -38,6 +38,7 @@ function App() {
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'warning' } | null>(null);
   const autoImportInFlightRef = useRef(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [refreshingAccountId, setRefreshingAccountId] = useState<string | 'all' | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
     accountId: string | null;
@@ -171,22 +172,49 @@ function App() {
   };
 
   const handleRefreshAll = async () => {
-    const result = await refreshAllUsage();
-    if (result.skipped) return;
-    if (result.updated > 0) {
-      showToast('刷新成功', 'success');
-    } else {
-      showToast('未找到用量信息，请对话一次', 'warning');
+    if (isRefreshing) return;
+    setRefreshingAccountId('all');
+    try {
+      const result = await refreshAllUsage();
+      if (result.skipped) return;
+      if (result.updated > 0) {
+        showToast('刷新成功', 'success');
+      } else {
+        showToast('未找到用量信息，请稍后重试', 'warning');
+      }
+    } finally {
+      setRefreshingAccountId(null);
     }
   };
 
   const handleRefresh = async (accountId: string) => {
-    const result = await refreshSingleAccount(accountId);
-    if (result.status === 'success') {
-      showToast('刷新成功', 'success');
-    } else if (result.status === 'no-usage') {
-      showToast('未找到用量信息，请对话一次', 'warning');
+    if (isRefreshing) return;
+    setRefreshingAccountId(accountId);
+    try {
+      const result = await refreshSingleAccount(accountId);
+      if (result.status === 'success') {
+        showToast('刷新成功', 'success');
+      } else {
+        const message =
+          result.message ||
+          (result.status === 'missing-account-id'
+            ? '缺少 ChatGPT account ID'
+            : result.status === 'missing-token'
+              ? '缺少 access token'
+              : result.status === 'no-codex-access'
+                ? 'no Codex access (plan: free)'
+                : result.status === 'no-usage'
+                  ? '未找到用量信息，请稍后重试'
+                  : '刷新失败');
+        showToast(message, 'warning');
+      }
+    } finally {
+      setRefreshingAccountId(null);
     }
+  };
+
+  const handleToggleProxy = async () => {
+    await updateConfig({ proxyEnabled: !config.proxyEnabled });
   };
 
   const activeAccount = accounts.find((account) => account.isActive);
@@ -203,6 +231,10 @@ function App() {
         onSyncAccount={handleSyncAccount}
         onRefreshAll={handleRefreshAll}
         onOpenSettings={() => setShowSettings(true)}
+        onToggleProxy={handleToggleProxy}
+        isProxyEnabled={config.proxyEnabled}
+        isRefreshing={isRefreshing}
+        isRefreshingAll={isRefreshing && refreshingAccountId === 'all'}
         isLoading={isLoading}
       />
 
@@ -281,6 +313,10 @@ function App() {
                       onSwitch={() => switchToAccount(account.id)}
                       onDelete={() => handleDeleteClick(account.id, account.alias)}
                       onRefresh={() => handleRefresh(account.id)}
+                      isRefreshing={isRefreshing}
+                      isRefreshingSelf={
+                        isRefreshing && (refreshingAccountId === account.id || refreshingAccountId === 'all')
+                      }
                     />
                   </div>
                 ))}

@@ -8,22 +8,24 @@ interface StatsSummaryProps {
 export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts }) => {
   if (accounts.length === 0) return null;
   
-  const accountsWithUsage = accounts.filter(a => a.usageInfo);
+  const accountsWithUsage = accounts.filter(
+    (a) => a.usageInfo && (!a.usageInfo.status || a.usageInfo.status === 'ok')
+  );
   const activeCount = accounts.filter(a => a.isActive).length;
   
   const bestAccount = accountsWithUsage.reduce<StoredAccount | null>((best, current) => {
     if (!best) return current;
-    const bestUsage = best.usageInfo?.weeklyLimit.percentLeft || 0;
-    const currentUsage = current.usageInfo?.weeklyLimit.percentLeft || 0;
+    const bestUsage = best.usageInfo?.weeklyLimit?.percentLeft || 0;
+    const currentUsage = current.usageInfo?.weeklyLimit?.percentLeft || 0;
     return currentUsage > bestUsage ? current : best;
   }, null);
   
   const avgWeeklyLeft = accountsWithUsage.length > 0
-    ? accountsWithUsage.reduce((sum, a) => sum + (a.usageInfo?.weeklyLimit.percentLeft || 0), 0) / accountsWithUsage.length
+    ? accountsWithUsage.reduce((sum, a) => sum + (a.usageInfo?.weeklyLimit?.percentLeft || 0), 0) / accountsWithUsage.length
     : 0;
   
   const avgFiveHourLeft = accountsWithUsage.length > 0
-    ? accountsWithUsage.reduce((sum, a) => sum + (a.usageInfo?.fiveHourLimit.percentLeft || 0), 0) / accountsWithUsage.length
+    ? accountsWithUsage.reduce((sum, a) => sum + (a.usageInfo?.fiveHourLimit?.percentLeft || 0), 0) / accountsWithUsage.length
     : 0;
   
   const planCounts = accounts.reduce((acc, a) => {
@@ -94,7 +96,7 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts }) => {
                   {bestAccount.alias}
                 </p>
                 <p className="text-xs text-[var(--dash-text-secondary)] mt-1">
-                  周限额剩余 {bestAccount.usageInfo?.weeklyLimit.percentLeft || 0}%
+                  周限额剩余 {bestAccount.usageInfo?.weeklyLimit?.percentLeft || 0}%
                 </p>
               </>
             ) : (

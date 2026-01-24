@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import type { StoredAccount } from '../types';
 import UsageBar from './UsageBar';
 
@@ -7,6 +7,8 @@ interface AccountCardProps {
   onSwitch: () => void;
   onDelete: () => void;
   onRefresh: () => void | Promise<void>;
+  isRefreshing?: boolean;
+  isRefreshingSelf?: boolean;
 }
 
 const planTypeColors: Record<string, string> = {
@@ -28,11 +30,48 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   onSwitch,
   onDelete,
   onRefresh,
+  isRefreshing = false,
+  isRefreshingSelf = false,
 }) => {
   const { accountInfo, usageInfo, isActive, alias } = account;
   const displayName = alias || accountInfo.email.split('@')[0];
-  const fiveHourLeft = usageInfo?.fiveHourLimit.percentLeft;
-  const weeklyLeft = usageInfo?.weeklyLimit.percentLeft;
+  const hasUsage = !!usageInfo && (!usageInfo.status || usageInfo.status === 'ok');
+  const fiveHourLeft = usageInfo?.fiveHourLimit?.percentLeft;
+  const weeklyLeft = usageInfo?.weeklyLimit?.percentLeft;
+  const codeReviewLeft = usageInfo?.codeReviewLimit?.percentLeft;
+  const fiveHourReset = usageInfo?.fiveHourLimit?.resetTime;
+  const weeklyReset = usageInfo?.weeklyLimit?.resetTime;
+
+  const normalizeWeeklyReset = (value?: string) => {
+    if (!value) return null;
+    return /^\d{2}-\d{2} \d{2}:\d{2}$/.test(value) ? value : null;
+  };
+
+  const normalizeFiveHourReset = (value?: string) => {
+    if (!value) return null;
+    return /^\d{2}:\d{2}$/.test(value) ? value : null;
+  };
+
+  const weeklyResetText = normalizeWeeklyReset(weeklyReset);
+  const fiveHourResetText = normalizeFiveHourReset(fiveHourReset);
+
+  const getLastRefreshedText = (value?: string) => {
+    if (!value) return null;
+    const numeric = /^\d+$/.test(value) ? Number(value) : NaN;
+    let timestamp = Number.isFinite(numeric) ? numeric : Date.parse(value);
+    if (!Number.isFinite(timestamp)) return null;
+    if (timestamp < 1_000_000_000_000) {
+      timestamp *= 1000;
+    }
+    const diffMs = Date.now() - timestamp;
+    if (!Number.isFinite(diffMs) || diffMs < 0) return null;
+    const totalMinutes = Math.max(0, Math.floor(diffMs / 60000));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `上次刷新 ${hours}小时 ${minutes}分钟`;
+  };
+
+  const lastRefreshedText = getLastRefreshedText(usageInfo?.lastUpdated);
 
   return (
     <div
@@ -42,7 +81,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
           : 'hover:bg-slate-50'
       }`}
     >
-      <div className="flex items-center gap-3 min-w-0 flex-1">
+      <div className="flex items-center gap-3 min-w-0 lg:flex-[0.85]">
         <div className="w-11 h-11 rounded-2xl bg-[var(--dash-accent-soft)] text-[var(--dash-accent)] flex items-center justify-center font-semibold">
           {accountInfo.email.charAt(0).toUpperCase()}
         </div>
@@ -52,9 +91,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
               {displayName}
             </span>
             {isActive && (
-              <span className="dash-pill bg-emerald-50 text-emerald-600">
-                当前使用
-              </span>
+              <span className="dash-pill bg-emerald-50 text-emerald-600">当前使用</span>
             )}
             <span
               className={`dash-pill ${
@@ -70,34 +107,72 @@ export const AccountCard: React.FC<AccountCardProps> = ({
         </div>
       </div>
 
-      <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <span className="text-xs text-[var(--dash-text-muted)]">周限额</span>
-            <span className="text-lg font-semibold text-[var(--dash-text-primary)]">
-              {weeklyLeft !== undefined ? `${weeklyLeft}%` : '--'}
-            </span>
+      <div className="lg:flex-[1.15] space-y-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="space-y-2">
+            <div className="flex items-baseline gap-2 min-w-0 flex-nowrap">
+              <span className="text-xs text-[var(--dash-text-muted)] shrink-0">周限额</span>
+              {weeklyResetText && (
+                <span className="text-[10px] text-[var(--dash-text-muted)] truncate max-w-[120px]">
+                  {weeklyResetText}
+                </span>
+              )}
+              <span className="ml-auto text-lg font-semibold text-[var(--dash-text-primary)] shrink-0">
+                {weeklyLeft !== undefined ? `${weeklyLeft}%` : '--'}
+              </span>
+            </div>
+            {hasUsage ? (
+              <UsageBar label="周限额" showLabel={false} percentLeft={weeklyLeft ?? 0} />
+            ) : (
+              <div className="h-1.5 bg-slate-100 rounded-full" />
+            )}
           </div>
-          {usageInfo ? (
-            <UsageBar label="周限额" showLabel={false} percentLeft={weeklyLeft ?? 0} />
-          ) : (
-            <div className="h-1.5 bg-slate-100 rounded-full" />
-          )}
+
+          <div className="space-y-2">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs text-[var(--dash-text-muted)]">5h 限额</span>
+              {fiveHourResetText && (
+                <span className="text-[10px] text-[var(--dash-text-muted)]">
+                  {fiveHourResetText}
+                </span>
+              )}
+              <span className="ml-auto text-lg font-semibold text-[var(--dash-text-primary)]">
+                {fiveHourLeft !== undefined ? `${fiveHourLeft}%` : '--'}
+              </span>
+            </div>
+            {hasUsage ? (
+              <UsageBar label="5h 限额" showLabel={false} percentLeft={fiveHourLeft ?? 0} />
+            ) : (
+              <div className="h-1.5 bg-slate-100 rounded-full" />
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between">
+              <span className="text-xs text-[var(--dash-text-muted)]">Code Review</span>
+              <span className="text-lg font-semibold text-[var(--dash-text-primary)]">
+                {codeReviewLeft !== undefined ? `${codeReviewLeft}%` : '--'}
+              </span>
+            </div>
+            {hasUsage && codeReviewLeft !== undefined ? (
+              <UsageBar label="Code Review" showLabel={false} percentLeft={codeReviewLeft ?? 0} />
+            ) : (
+              <div className="h-1.5 bg-slate-100 rounded-full" />
+            )}
+          </div>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <span className="text-xs text-[var(--dash-text-muted)]">5h 限额</span>
-            <span className="text-lg font-semibold text-[var(--dash-text-primary)]">
-              {fiveHourLeft !== undefined ? `${fiveHourLeft}%` : '--'}
-            </span>
+        {usageInfo?.status && usageInfo.status !== 'ok' && (
+          <div className="w-full rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700 truncate">
+            {usageInfo.message || '用量信息不可用'}
           </div>
-          {usageInfo ? (
-            <UsageBar label="5h 限额" showLabel={false} percentLeft={fiveHourLeft ?? 0} />
-          ) : (
-            <div className="h-1.5 bg-slate-100 rounded-full" />
-          )}
-        </div>
+        )}
+
+        {lastRefreshedText && (
+          <div className="text-[11px] text-[var(--dash-text-muted)]">
+            {lastRefreshedText}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-2 justify-start lg:justify-end lg:w-[164px] lg:flex-shrink-0">
@@ -111,10 +186,16 @@ export const AccountCard: React.FC<AccountCardProps> = ({
         )}
         <button
           onClick={onRefresh}
-          className="h-9 w-9 rounded-full border border-[var(--dash-border)] text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 transition-colors flex items-center justify-center"
+          disabled={isRefreshing}
+          className="h-9 w-9 rounded-full border border-[var(--dash-border)] text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 transition-colors flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none"
           title="刷新用量"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg
+            className={`w-4 h-4 ${isRefreshingSelf ? 'animate-spin' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
         </button>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import type { AppConfig } from '../types';
 
 interface SettingsModalProps {
@@ -15,14 +15,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSave,
 }) => {
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(config.autoRefreshInterval);
+  const [proxyEnabled, setProxyEnabled] = useState(config.proxyEnabled);
+  const [proxyUrl, setProxyUrl] = useState(config.proxyUrl);
   const [isSaving, setIsSaving] = useState(false);
-  
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setAutoRefreshInterval(config.autoRefreshInterval);
+    setProxyEnabled(config.proxyEnabled);
+    setProxyUrl(config.proxyUrl);
+  }, [isOpen, config.autoRefreshInterval, config.proxyEnabled, config.proxyUrl]);
+
   if (!isOpen) return null;
-  
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await onSave({ autoRefreshInterval });
+      await onSave({ autoRefreshInterval, proxyEnabled, proxyUrl });
       onClose();
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -30,7 +39,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setIsSaving(false);
     }
   };
-  
+
   return (
     <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50 animate-fade-in">
       <div className="bg-white rounded-2xl p-6 w-full max-w-sm mx-4 border border-[var(--dash-border)] shadow-[0_24px_60px_rgba(15,23,42,0.2)]">
@@ -45,7 +54,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </svg>
           </button>
         </div>
-        
+
         <div className="space-y-5">
           {/* 自动刷新间隔 */}
           <div>
@@ -67,10 +76,50 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </span>
             </div>
             <p className="text-xs text-[var(--dash-text-muted)] mt-2">
-              设置为0禁用自动刷新
+              设置为 0 禁用自动刷新
             </p>
           </div>
-          
+
+          {/* 代理设置 */}
+          <div className="pt-4 border-t border-slate-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-[var(--dash-text-primary)]">启用代理</p>
+                <p className="text-xs text-[var(--dash-text-muted)] mt-1">
+                  用于访问 chatgpt.com/wham/usage
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProxyEnabled(!proxyEnabled)}
+                className={`relative h-8 w-14 rounded-full transition-colors ${
+                  proxyEnabled ? 'bg-emerald-500' : 'bg-slate-200'
+                }`}
+              >
+                <span
+                  className={`absolute top-1 left-1 h-6 w-6 bg-white rounded-full shadow transition-transform ${
+                    proxyEnabled ? 'translate-x-6' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+            <div>
+              <label className="block text-[var(--dash-text-secondary)] text-xs font-medium mb-1.5">
+                代理地址
+              </label>
+              <input
+                type="text"
+                value={proxyUrl}
+                onChange={(e) => setProxyUrl(e.target.value)}
+                placeholder="http://127.0.0.1:7890"
+                className="w-full h-10 px-3 bg-white border border-[var(--dash-border)] rounded-xl text-sm text-[var(--dash-text-primary)] placeholder-[var(--dash-text-muted)] focus:border-blue-400 outline-none transition-colors"
+              />
+              <p className="text-xs text-[var(--dash-text-muted)] mt-1">
+                支持 http(s) 或 socks5，例如 socks5://127.0.0.1:7890
+              </p>
+            </div>
+          </div>
+
           {/* 关于 */}
           <div className="pt-4 border-t border-slate-200">
             <h3 className="text-[var(--dash-text-secondary)] text-xs font-medium mb-2">关于</h3>
@@ -85,7 +134,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
         </div>
-        
+
         {/* 操作按钮 */}
         <div className="flex gap-2 mt-5">
           <button

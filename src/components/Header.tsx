@@ -7,6 +7,10 @@ interface HeaderProps {
   onSyncAccount: () => void;
   onRefreshAll: () => void | Promise<void>;
   onOpenSettings: () => void;
+  onToggleProxy: () => void;
+  isProxyEnabled: boolean;
+  isRefreshing: boolean;
+  isRefreshingAll: boolean;
   isLoading: boolean;
 }
 
@@ -17,6 +21,10 @@ export const Header: React.FC<HeaderProps> = ({
   onSyncAccount,
   onRefreshAll,
   onOpenSettings,
+  onToggleProxy,
+  isProxyEnabled,
+  isRefreshing,
+  isRefreshingAll,
   isLoading,
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -77,11 +85,11 @@ export const Header: React.FC<HeaderProps> = ({
             {accountCount > 0 && (
               <button
                 onClick={onRefreshAll}
-                disabled={isLoading}
+                disabled={isLoading || isRefreshing}
                 className="h-10 px-3 rounded-full border border-[var(--dash-border)] text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 bg-white/70 transition-colors flex items-center gap-2 disabled:opacity-50"
               >
                 <svg
-                  className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`}
+                  className={`w-4 h-4 ${isRefreshingAll ? 'animate-spin' : ''}`}
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -91,6 +99,21 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="text-sm hidden md:inline">刷新用量</span>
               </button>
             )}
+
+            <button
+              onClick={onToggleProxy}
+              className={`h-10 px-3 rounded-full border transition-colors flex items-center gap-2 text-sm ${
+                isProxyEnabled
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border-[var(--dash-border)] bg-white/70 text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300'
+              }`}
+              title={isProxyEnabled ? '代理已开启' : '代理已关闭'}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h18M3 12h18M3 17h18" />
+              </svg>
+              <span>{isProxyEnabled ? '代理开启' : '代理关闭'}</span>
+            </button>
 
             <button
               onClick={onSyncAccount}

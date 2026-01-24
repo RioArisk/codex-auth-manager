@@ -35,10 +35,12 @@ export const useAccountStore = create<AccountState>((set, get) => ({
   accounts: [],
   activeAccountId: null,
   config: {
-    autoRefreshInterval: 10,
+    autoRefreshInterval: 30,
     codexPath: 'codex',
     theme: 'dark',
     hasInitialized: false,
+    proxyEnabled: false,
+    proxyUrl: 'http://127.0.0.1:7890',
   },
   isLoading: false,
   error: null,

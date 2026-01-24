@@ -26,20 +26,27 @@ export interface AccountInfo {
 
 // 用量信息
 export interface UsageInfo {
+  status?: 'ok' | 'missing_account_id' | 'missing_token' | 'no_codex_access' | 'no_usage' | 'error';
+  message?: string;
+  planType?: string;
   contextWindow?: {
     percentLeft: number;
     used: string;
     total: string;
   };
-  fiveHourLimit: {
+  fiveHourLimit?: {
     percentLeft: number;
     resetTime: string;
   };
-  weeklyLimit: {
+  weeklyLimit?: {
     percentLeft: number;
     resetTime: string;
   };
-  lastUpdated: string;
+  codeReviewLimit?: {
+    percentLeft: number;
+    resetTime: string;
+  };
+  lastUpdated?: string;
   sourceFile?: string;
 }
 
@@ -60,6 +67,8 @@ export interface AppConfig {
   codexPath: string; // Codex CLI路径
   theme: 'dark' | 'light';
   hasInitialized: boolean; // 是否已尝试过首次自动同步
+  proxyEnabled: boolean;
+  proxyUrl: string;
 }
 
 // 账号存储文件结构

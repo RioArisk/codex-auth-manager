@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use notify::{EventKind, RecursiveMode, Watcher};
+use reqwest::{Client, Proxy};
 use serde::{Deserialize, Serialize};
 
 static USAGE_BINDINGS_LOCK: Mutex<()> = Mutex::new(());
@@ -235,6 +236,7 @@ fn get_latest_bound_session_path(account_id: &str) -> Result<PathBuf, String> {
 
 #[derive(Debug, Deserialize)]
 struct AuthTokens {
+    access_token: Option<String>,
     account_id: Option<String>,
 }
 
@@ -284,8 +286,18 @@ pub struct UsageData {
     pub five_hour_reset_time_ms: i64,
     pub weekly_percent_left: f64,
     pub weekly_reset_time_ms: i64,
+    pub code_review_percent_left: Option<f64>,
+    pub code_review_reset_time_ms: Option<i64>,
     pub last_updated: String,
     pub source_file: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UsageResult {
+    pub status: String,
+    pub message: Option<String>,
+    pub plan_type: Option<String>,
+    pub usage: Option<UsageData>,
 }
 
 /// 获取 codex sessions 目录路径
@@ -453,6 +465,8 @@ fn parse_rate_limits_from_file(file_path: &PathBuf) -> Result<UsageData, String>
         five_hour_reset_time_ms: five_hour_reset_ms,
         weekly_percent_left: 100.0 - secondary_used,
         weekly_reset_time_ms: weekly_reset_ms,
+        code_review_percent_left: None,
+        code_review_reset_time_ms: None,
         last_updated,
         source_file: Some(file_path.to_string_lossy().to_string()),
     })
@@ -494,6 +508,226 @@ fn validate_used_percent(value: f64) -> Result<f64, String> {
         return Err("Invalid used_percent in rate_limits".to_string());
     }
     Ok(value)
+}
+
+#[derive(Debug)]
+struct ParsedLimit {
+    percent_left: f64,
+    reset_time_ms: i64,
+    window_minutes: Option<u32>,
+}
+
+fn json_to_f64(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_i64().map(|v| v as f64))
+        .or_else(|| value.as_str().and_then(|s| s.parse::<f64>().ok()))
+}
+
+fn json_to_i64(value: &serde_json::Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+        .or_else(|| value.as_f64().map(|v| v.round() as i64))
+        .or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok()))
+}
+
+fn extract_reset_time_ms(value: &serde_json::Value) -> Option<i64> {
+    let direct_fields = [
+        "reset_at_ms",
+        "resets_at_ms",
+        "reset_time_ms",
+        "reset_at",
+        "resets_at",
+        "reset",
+    ];
+
+    for field in direct_fields.iter() {
+        if let Some(raw) = value.get(*field).and_then(json_to_i64) {
+            return Some(raw);
+        }
+    }
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_millis()).ok())
+        .unwrap_or(0);
+
+    if let Some(seconds) = value.get("reset_in_seconds").and_then(json_to_i64) {
+        return Some(now_ms.saturating_add(seconds.saturating_mul(1000)));
+    }
+
+    if let Some(seconds) = value.get("reset_after_seconds").and_then(json_to_i64) {
+        return Some(now_ms.saturating_add(seconds.saturating_mul(1000)));
+    }
+
+    if let Some(seconds) = value.get("reset_in").and_then(json_to_i64) {
+        return Some(now_ms.saturating_add(seconds.saturating_mul(1000)));
+    }
+
+    None
+}
+
+fn parse_rate_limit_entry(value: &serde_json::Value) -> Result<ParsedLimit, String> {
+    let used_percent = value
+        .get("used_percent")
+        .or_else(|| value.get("usedPercent"))
+        .and_then(json_to_f64);
+    let used = value.get("used").and_then(json_to_f64);
+    let remaining = value.get("remaining").and_then(json_to_f64);
+    let limit = value
+        .get("limit")
+        .or_else(|| value.get("total"))
+        .or_else(|| value.get("capacity"))
+        .and_then(json_to_f64);
+
+    let percent_left = if let Some(used_percent) = used_percent {
+        let used_norm = if used_percent <= 1.0 {
+            used_percent * 100.0
+        } else {
+            used_percent
+        };
+        100.0 - used_norm
+    } else if let (Some(remaining), Some(limit)) = (remaining, limit) {
+        if limit <= 0.0 {
+            return Err("Invalid limit value".to_string());
+        }
+        (remaining / limit) * 100.0
+    } else if let (Some(used), Some(limit)) = (used, limit) {
+        if limit <= 0.0 {
+            return Err("Invalid limit value".to_string());
+        }
+        100.0 - (used / limit) * 100.0
+    } else {
+        return Err("Missing usage fields in rate_limit entry".to_string());
+    };
+
+    let raw_reset = extract_reset_time_ms(value).ok_or_else(|| "Missing reset timestamp".to_string())?;
+    let reset_time_ms = normalize_unix_timestamp_ms(raw_reset)?;
+
+    let window_minutes = value
+        .get("window_minutes")
+        .and_then(json_to_i64)
+        .and_then(|v| u32::try_from(v).ok())
+        .or_else(|| {
+            value
+                .get("window_seconds")
+                .and_then(json_to_i64)
+                .and_then(|v| u32::try_from(v / 60).ok())
+        })
+        .or_else(|| {
+            value
+                .get("limit_window_seconds")
+                .and_then(json_to_i64)
+                .and_then(|v| u32::try_from(v / 60).ok())
+        });
+
+    Ok(ParsedLimit {
+        percent_left: percent_left.clamp(0.0, 100.0),
+        reset_time_ms,
+        window_minutes,
+    })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LimitKind {
+    FiveHour,
+    Weekly,
+}
+
+fn detect_limit_kind(value: &serde_json::Value, window_minutes: Option<u32>) -> Option<LimitKind> {
+    if let Some(kind) = value
+        .get("type")
+        .and_then(|v| v.as_str())
+        .or_else(|| value.get("name").and_then(|v| v.as_str()))
+    {
+        let kind_lower = kind.to_lowercase();
+        if kind_lower.contains("week") {
+            return Some(LimitKind::Weekly);
+        }
+        if kind_lower.contains("five") || kind_lower.contains("5h") || kind_lower.contains("hour") {
+            return Some(LimitKind::FiveHour);
+        }
+    }
+
+    if let Some(minutes) = window_minutes {
+        if minutes <= 360 {
+            return Some(LimitKind::FiveHour);
+        }
+        if minutes >= 10080 {
+            return Some(LimitKind::Weekly);
+        }
+    }
+
+    None
+}
+
+fn parse_rate_limits(value: &serde_json::Value) -> Result<(ParsedLimit, ParsedLimit), String> {
+    if let (Some(primary), Some(secondary)) = (value.get("primary"), value.get("secondary")) {
+        let five = parse_rate_limit_entry(primary)?;
+        let weekly = parse_rate_limit_entry(secondary)?;
+        return Ok((five, weekly));
+    }
+
+    if let (Some(primary), Some(secondary)) = (
+        value.get("primary_window"),
+        value.get("secondary_window"),
+    ) {
+        let five = parse_rate_limit_entry(primary)?;
+        let weekly = parse_rate_limit_entry(secondary)?;
+        return Ok((five, weekly));
+    }
+
+    let entries = value
+        .get("limits")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .or_else(|| value.as_array().cloned())
+        .ok_or_else(|| "Missing rate_limit entries".to_string())?;
+
+    let mut five: Option<ParsedLimit> = None;
+    let mut weekly: Option<ParsedLimit> = None;
+
+    for entry in entries.iter() {
+        let parsed = parse_rate_limit_entry(entry)?;
+        match detect_limit_kind(entry, parsed.window_minutes) {
+            Some(LimitKind::FiveHour) => five = Some(parsed),
+            Some(LimitKind::Weekly) => weekly = Some(parsed),
+            None => {
+                if five.is_none() {
+                    five = Some(parsed);
+                } else if weekly.is_none() {
+                    weekly = Some(parsed);
+                }
+            }
+        }
+    }
+
+    match (five, weekly) {
+        (Some(five), Some(weekly)) => Ok((five, weekly)),
+        _ => Err("Missing primary/weekly rate_limit data".to_string()),
+    }
+}
+
+fn parse_optional_rate_limit(value: &serde_json::Value) -> Option<ParsedLimit> {
+    if let Some(primary) = value.get("primary") {
+        return parse_rate_limit_entry(primary).ok();
+    }
+
+    if let Some(primary) = value.get("primary_window") {
+        return parse_rate_limit_entry(primary).ok();
+    }
+
+    if let Some(entries) = value.get("limits").and_then(|v| v.as_array()) {
+        return entries.first().and_then(|entry| parse_rate_limit_entry(entry).ok());
+    }
+
+    if let Some(entries) = value.as_array() {
+        return entries.first().and_then(|entry| parse_rate_limit_entry(entry).ok());
+    }
+
+    parse_rate_limit_entry(value).ok()
 }
 
 fn parse_session_meta(file_path: &PathBuf) -> Result<(String, String), String> {
@@ -580,6 +814,170 @@ fn get_bound_usage(account_id: String) -> Result<UsageData, String> {
     let mut data = parse_rate_limits_from_file(&path)?;
     data.source_file = Some(path.to_string_lossy().to_string());
     Ok(data)
+}
+
+/// 通过 wham/usage API 获取 Codex quota
+#[tauri::command]
+async fn get_codex_wham_usage(
+    account_id: String,
+    proxy_enabled: Option<bool>,
+    proxy_url: Option<String>,
+) -> Result<UsageResult, String> {
+    if account_id.is_empty() {
+        return Ok(UsageResult {
+            status: "missing_account_id".to_string(),
+            message: Some("缺少 ChatGPT account ID".to_string()),
+            plan_type: None,
+            usage: None,
+        });
+    }
+
+    let auth_json = read_account_auth(account_id)?;
+    let auth: AuthConfig = serde_json::from_str(&auth_json).map_err(|e| e.to_string())?;
+    let tokens = match auth.tokens {
+        Some(tokens) => tokens,
+        None => {
+            return Ok(UsageResult {
+                status: "missing_token".to_string(),
+                message: Some("缺少 access token".to_string()),
+                plan_type: None,
+                usage: None,
+            })
+        }
+    };
+    let access_token = tokens.access_token;
+    let chatgpt_account_id = tokens.account_id;
+
+    if access_token.is_none() {
+        return Ok(UsageResult {
+            status: "missing_token".to_string(),
+            message: Some("缺少 access token".to_string()),
+            plan_type: None,
+            usage: None,
+        });
+    }
+
+    if chatgpt_account_id.is_none() {
+        return Ok(UsageResult {
+            status: "missing_account_id".to_string(),
+            message: Some("缺少 ChatGPT account ID".to_string()),
+            plan_type: None,
+            usage: None,
+        });
+    }
+
+    let mut client_builder = Client::builder();
+    if proxy_enabled.unwrap_or(false) {
+        let proxy_value = proxy_url.unwrap_or_default();
+        if proxy_value.trim().is_empty() {
+            return Ok(UsageResult {
+                status: "error".to_string(),
+                message: Some("代理已开启但代理地址为空".to_string()),
+                plan_type: None,
+                usage: None,
+            });
+        }
+        let proxy = Proxy::all(&proxy_value).map_err(|e| e.to_string())?;
+        client_builder = client_builder.proxy(proxy);
+    }
+
+    let client = client_builder.build().map_err(|e| e.to_string())?;
+    let response = match client
+        .get("https://chatgpt.com/backend-api/wham/usage")
+        .header("Authorization", format!("Bearer {}", access_token.unwrap()))
+        .header("Accept", "application/json")
+        .header("ChatGPT-Account-Id", chatgpt_account_id.unwrap())
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            return Ok(UsageResult {
+                status: "error".to_string(),
+                message: Some(err.to_string()),
+                plan_type: None,
+                usage: None,
+            })
+        }
+    };
+
+    let status = response.status();
+    let body = response.text().await.map_err(|e| e.to_string())?;
+
+    if !status.is_success() {
+        return Ok(UsageResult {
+            status: "error".to_string(),
+            message: Some(format!("wham/usage 请求失败: {}", status)),
+            plan_type: None,
+            usage: None,
+        });
+    }
+
+    let value: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let plan_type = value
+        .get("plan_type")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    if let Some(plan) = plan_type.as_deref() {
+        if plan == "free" {
+            return Ok(UsageResult {
+                status: "no_codex_access".to_string(),
+                message: Some(format!("no Codex access (plan: {})", plan)),
+                plan_type,
+                usage: None,
+            });
+        }
+    }
+
+    let rate_limit_value = match value
+        .get("rate_limit")
+        .or_else(|| value.get("rate_limits"))
+    {
+        Some(value) => value,
+        None => {
+            return Ok(UsageResult {
+                status: "no_usage".to_string(),
+                message: Some("Missing rate_limit in response".to_string()),
+                plan_type,
+                usage: None,
+            })
+        }
+    };
+
+    let (five_hour, weekly) = match parse_rate_limits(rate_limit_value) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            return Ok(UsageResult {
+                status: "no_usage".to_string(),
+                message: Some(err),
+                plan_type,
+                usage: None,
+            })
+        }
+    };
+
+    let code_review = value
+        .get("code_review_rate_limit")
+        .and_then(parse_optional_rate_limit);
+
+    let usage = UsageData {
+        five_hour_percent_left: five_hour.percent_left,
+        five_hour_reset_time_ms: five_hour.reset_time_ms,
+        weekly_percent_left: weekly.percent_left,
+        weekly_reset_time_ms: weekly.reset_time_ms,
+        code_review_percent_left: code_review.as_ref().map(|l| l.percent_left),
+        code_review_reset_time_ms: code_review.as_ref().map(|l| l.reset_time_ms),
+        last_updated: now_epoch_ms_string(),
+        source_file: None,
+    };
+
+    Ok(UsageResult {
+        status: "ok".to_string(),
+        message: None,
+        plan_type,
+        usage: Some(usage),
+    })
 }
 
 fn json_contains_string(value: &serde_json::Value, needle: &str) -> bool {
@@ -709,6 +1107,8 @@ fn get_account_usage(account_email: String) -> Result<UsageData, String> {
                         five_hour_reset_time_ms: five_hour_reset_ms,
                         weekly_percent_left: 100.0 - secondary_used,
                         weekly_reset_time_ms: weekly_reset_ms,
+                        code_review_percent_left: None,
+                        code_review_reset_time_ms: None,
                         last_updated,
                         source_file: Some(file_path.to_string_lossy().to_string()),
                     });
@@ -733,7 +1133,6 @@ pub fn run() {
                         .build(),
                 )?;
             }
-            start_session_watcher();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -746,10 +1145,7 @@ pub fn run() {
             delete_account_auth,
             read_file_content,
             get_home_dir,
-            get_usage_from_sessions,
-            get_bound_usage,
-            get_usage_from_file,
-            get_account_usage,
+            get_codex_wham_usage,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -3,10 +3,12 @@ import type { AccountsStore, StoredAccount, CodexAuthConfig, AppConfig } from '.
 import { parseAccountInfo, generateId } from './jwt';
 
 const DEFAULT_CONFIG: AppConfig = {
-  autoRefreshInterval: 10, // 10分钟
+  autoRefreshInterval: 30, // 30分钟
   codexPath: 'codex',
   theme: 'dark',
   hasInitialized: false,
+  proxyEnabled: false,
+  proxyUrl: 'http://127.0.0.1:7890',
 };
 
 const DEFAULT_STORE: AccountsStore = {
