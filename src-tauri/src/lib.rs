@@ -583,7 +583,7 @@ fn parse_rate_limit_entry(value: &serde_json::Value) -> Result<ParsedLimit, Stri
         .and_then(json_to_f64);
 
     let percent_left = if let Some(used_percent) = used_percent {
-        let used_norm = if used_percent <= 1.0 {
+        let used_norm = if used_percent <= 1.0 && used_percent.fract() != 0.0 {
             used_percent * 100.0
         } else {
             used_percent
@@ -1133,6 +1133,7 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            start_session_watcher();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1146,6 +1147,10 @@ pub fn run() {
             read_file_content,
             get_home_dir,
             get_codex_wham_usage,
+            get_usage_from_sessions,
+            get_bound_usage,
+            get_usage_from_file,
+            get_account_usage,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
