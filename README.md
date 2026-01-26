@@ -5,7 +5,7 @@
 ## 功能特点
 
 - 🔄 **一键切换账号**：在多个 Codex 账号之间快速切换，自动写入 `.codex/auth.json`
-- 📊 **用量监控**：从本地 `~/.codex/sessions` 解析 5 小时 / 周限额信息
+- 📊 **用量监控**：通过 `wham/usage` API 获取 5 小时 / 周限额信息
 - 🎯 **智能推荐**：基于周限额剩余量自动推荐最充足账号
 - ⏰ **自动刷新**：可设置自动刷新间隔（分钟）
 - 🧩 **本地存储**：账号与配置均保存到本地文件
@@ -61,8 +61,8 @@ npm run tauri build
 - 刷新单个账号：卡片上的刷新按钮
 - 刷新全部账号：顶部 **“刷新全部”**
 
-> 用量数据来自本地 `~/.codex/sessions` 日志。
-> 如果某账号从未使用过 Codex，可能会显示“暂无用量数据”。
+> 用量数据来自 `https://chatgpt.com/backend-api/wham/usage`。
+> 若账号缺少有效 token 或无 Codex 访问权限，将显示“暂无用量数据”。
 
 ### 设置
 
@@ -75,12 +75,12 @@ npm run tauri build
 - **账号列表与配置**：`%LOCALAPPDATA%\codex-manager\accounts.json`
 - **账号凭据**：`%USERPROFILE%\.codex_manager\auths\{accountId}.json`
 - **当前 Codex 配置**：`%USERPROFILE%\.codex\auth.json`
-- **用量来源**：`%USERPROFILE%\.codex\sessions\**\*.jsonl`
+- **用量来源**：`https://chatgpt.com/backend-api/wham/usage`（使用本地账号 token）
 
 ## 已知限制
 
 - 用量时间显示目前固定按 **UTC+8** 计算（后续可改为本地时区）
-- 用量解析依赖本地 session 日志，无法主动查询远端
+- 用量查询依赖 `wham/usage` 接口与账号 token，网络不可用或 token 失效会导致刷新失败
 
 ## 项目结构
 
