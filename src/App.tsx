@@ -272,108 +272,114 @@ function App() {
     : undefined;
 
   return (
-    <div className="min-h-screen pb-12 page-enter">
-      <Header
-        accountCount={accounts.length}
-        activeName={activeName}
-        onAddAccount={() => setShowAddModal(true)}
-        onSyncAccount={handleSyncAccount}
-        onRefreshAll={handleRefreshAll}
-        onOpenSettings={() => setShowSettings(true)}
-        onToggleProxy={handleToggleProxy}
-        isProxyEnabled={config.proxyEnabled}
-        isRefreshing={isRefreshing}
-        isRefreshingAll={isRefreshing && refreshingAccountId === 'all'}
-        isLoading={isLoading}
-      />
+    <>
+      {/* 主要内容区域 - 带入场动画 */}
+      <div className="min-h-screen pb-12 page-enter">
+        <Header
+          accountCount={accounts.length}
+          activeName={activeName}
+          onAddAccount={() => setShowAddModal(true)}
+          onSyncAccount={handleSyncAccount}
+          onRefreshAll={handleRefreshAll}
+          onOpenSettings={() => setShowSettings(true)}
+          onToggleProxy={handleToggleProxy}
+          isProxyEnabled={config.proxyEnabled}
+          isRefreshing={isRefreshing}
+          isRefreshingAll={isRefreshing && refreshingAccountId === 'all'}
+          isLoading={isLoading}
+        />
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* 错误提示 */}
-        {error && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm flex items-center justify-between animate-fade-in">
-            <div className="flex items-center gap-2">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>{error}</span>
-            </div>
-            <button onClick={clearError} className="text-red-500 hover:text-red-600 p-1">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        )}
-
-        {/* 加载状态 */}
-        {isInitializing && accounts.length === 0 && (
-          <div className="flex items-center justify-center py-20">
-            <div className="flex items-center gap-2 text-[var(--dash-text-secondary)]">
-              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              <span className="text-sm">初始化中...</span>
-            </div>
-          </div>
-        )}
-
-        {isLoading && accounts.length === 0 && !isInitializing && (
-          <div className="flex items-center justify-center py-20">
-            <div className="flex items-center gap-2 text-[var(--dash-text-secondary)]">
-              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              <span className="text-sm">加载中...</span>
-            </div>
-          </div>
-        )}
-
-        {/* 空状态 */}
-        {hasLoadedAccounts && !isLoading && !isInitializing && accounts.length === 0 && (
-          <EmptyState onAddAccount={() => setShowAddModal(true)} />
-        )}
-
-        {/* 有账号时显示统计和列表 */}
-        {accounts.length > 0 && (
-          <>
-            <StatsSummary accounts={accounts} />
-
-            <div className="dash-card p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-sm font-semibold text-[var(--dash-text-primary)]">账号列表</h2>
-                  <p className="text-xs text-[var(--dash-text-secondary)]">聚焦关键用量信息</p>
-                </div>
-                <span className="text-xs text-[var(--dash-text-muted)]">
-                  共 {accounts.length} 个
-                </span>
+        <main className="max-w-7xl mx-auto px-6 py-8">
+          {/* 错误提示 */}
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm flex items-center justify-between animate-fade-in">
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{error}</span>
               </div>
-              <div className="flex flex-col gap-3">
-                {accounts.map((account, index) => (
-                  <div
-                    key={account.id}
-                    className="animate-fade-in"
-                    style={{ animationDelay: `${index * 50}ms` }}
-                  >
-                    <AccountCard
-                      account={account}
-                      onSwitch={() => switchToAccount(account.id)}
-                      onDelete={() => handleDeleteClick(account.id, account.alias)}
-                      onRefresh={() => handleRefresh(account.id)}
-                      isRefreshing={isRefreshing}
-                      isRefreshingSelf={
-                        isRefreshing && (refreshingAccountId === account.id || refreshingAccountId === 'all')
-                      }
-                    />
+              <button onClick={clearError} className="text-red-500 hover:text-red-600 p-1">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {/* 加载状态 */}
+          {isInitializing && accounts.length === 0 && (
+            <div className="flex items-center justify-center py-20">
+              <div className="flex items-center gap-2 text-[var(--dash-text-secondary)]">
+                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span className="text-sm">初始化中...</span>
+              </div>
+            </div>
+          )}
+
+          {isLoading && accounts.length === 0 && !isInitializing && (
+            <div className="flex items-center justify-center py-20">
+              <div className="flex items-center gap-2 text-[var(--dash-text-secondary)]">
+                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span className="text-sm">加载中...</span>
+              </div>
+            </div>
+          )}
+
+          {/* 空状态 */}
+          {hasLoadedAccounts && !isLoading && !isInitializing && accounts.length === 0 && (
+            <EmptyState onAddAccount={() => setShowAddModal(true)} />
+          )}
+
+          {/* 有账号时显示统计和列表 */}
+          {accounts.length > 0 && (
+            <>
+              <StatsSummary accounts={accounts} />
+
+              <div className="dash-card p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 className="text-sm font-semibold text-[var(--dash-text-primary)]">账号列表</h2>
+                    <p className="text-xs text-[var(--dash-text-secondary)]">聚焦关键用量信息</p>
                   </div>
-                ))}
+                  <span className="text-xs text-[var(--dash-text-muted)]">
+                    共 {accounts.length} 个
+                  </span>
+                </div>
+                <div className="flex flex-col gap-3">
+                  {accounts.map((account, index) => (
+                    <div
+                      key={account.id}
+                      className="animate-fade-in"
+                      style={{ animationDelay: `${index * 50}ms` }}
+                    >
+                      <AccountCard
+                        account={account}
+                        onSwitch={() => switchToAccount(account.id)}
+                        onDelete={() => handleDeleteClick(account.id, account.alias)}
+                        onRefresh={() => handleRefresh(account.id)}
+                        isRefreshing={isRefreshing}
+                        isRefreshingSelf={
+                          isRefreshing && (refreshingAccountId === account.id || refreshingAccountId === 'all')
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          </>
-        )}
-      </main>
+            </>
+          )}
+        </main>
+      </div>
+
+      {/* 以下元素使用 fixed 定位，必须放在 page-enter 容器外面 */}
+      {/* 否则 transform 动画会创建新的包含块，导致 fixed 失效 */}
 
       {/* 添加账号弹窗 */}
       <AddAccountModal
@@ -414,7 +420,7 @@ function App() {
         onCancel={handleCancelIdentityImport}
       />
 
-      {/* 右上角提示 */}
+      {/* 右上角提示 - Toast */}
       {toast && (
         <div className="fixed top-6 right-6 z-50 flex flex-col items-end gap-2 pointer-events-none">
           <Toast message={toast.message} tone={toast.tone} />
@@ -422,13 +428,13 @@ function App() {
       )}
 
       {/* 底部状态栏 */}
-      <footer className="fixed bottom-0 left-0 right-0 bg-white/70 border-t border-[var(--dash-border)] py-2 px-5 backdrop-blur">
+      <footer className="fixed bottom-0 left-0 right-0 bg-white/70 border-t border-[var(--dash-border)] py-2 px-5 backdrop-blur z-40">
         <div className="max-w-7xl mx-auto flex items-center justify-between text-xs text-[var(--dash-text-muted)]">
           <span>Codex Manager v0.1.1</span>
           <span>数据存储于本地</span>
         </div>
       </footer>
-    </div>
+    </>
   );
 }
 
