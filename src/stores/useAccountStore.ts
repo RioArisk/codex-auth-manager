@@ -1,13 +1,15 @@
 import { create } from 'zustand';
 import type { StoredAccount, AccountsStore, AppConfig, UsageInfo } from '../types';
-import { 
-  loadAccountsStore, 
-  saveAccountsStore, 
+import {
+  loadAccountsStore,
+  saveAccountsStore,
   switchToAccount as switchAccount,
   addAccount as addAccountToStore,
   removeAccount as removeAccountFromStore,
   updateAccountUsage as updateUsage,
   syncCurrentAccount as syncCurrent,
+  isMissingIdentityError,
+  type AddAccountOptions,
 } from '../utils/storage';
 
 interface AccountState {
@@ -21,7 +23,7 @@ interface AccountState {
   // Actions
   loadAccounts: () => Promise<void>;
   syncCurrentAccount: () => Promise<void>;
-  addAccount: (authJson: string, alias?: string) => Promise<void>;
+  addAccount: (authJson: string, alias?: string, options?: AddAccountOptions) => Promise<void>;
   removeAccount: (accountId: string) => Promise<void>;
   switchToAccount: (accountId: string) => Promise<void>;
   updateUsage: (accountId: string, usage: UsageInfo) => Promise<void>;
@@ -87,11 +89,11 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     }
   },
   
-  addAccount: async (authJson: string, alias?: string) => {
+  addAccount: async (authJson: string, alias?: string, options?: AddAccountOptions) => {
     set({ isLoading: true, error: null });
     try {
       const authConfig = JSON.parse(authJson);
-      const newAccount = await addAccountToStore(authConfig, alias);
+      const newAccount = await addAccountToStore(authConfig, alias, options);
       
       // 更新本地状态
       const { accounts } = get();
@@ -109,6 +111,10 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         });
       }
     } catch (error) {
+      if (isMissingIdentityError(error)) {
+        set({ isLoading: false, error: null });
+        throw error;
+      }
       set({ 
         isLoading: false, 
         error: error instanceof Error ? error.message : 'Failed to add account' 

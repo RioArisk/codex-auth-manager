@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AccountsStore, StoredAccount, CodexAuthConfig, AppConfig } from '../types';
+import type { AccountsStore, StoredAccount, CodexAuthConfig, AppConfig, AccountInfo } from '../types';
 import { parseAccountInfo, generateId } from './jwt';
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -18,6 +18,128 @@ const DEFAULT_STORE: AccountsStore = {
 };
 
 type LegacyStoredAccount = StoredAccount & { authConfig?: CodexAuthConfig };
+
+export type AddAccountOptions = {
+  allowMissingIdentity?: boolean;
+};
+
+type AccountIdentity = {
+  accountId: string | null;
+  userId: string | null;
+  email: string | null;
+};
+
+function normalizeId(value?: string | null): string | null {
+  const trimmed = (value ?? '').trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeEmail(value?: string | null): string | null {
+  const trimmed = (value ?? '').trim();
+  if (!trimmed) return null;
+  if (trimmed.toLowerCase() === 'unknown') return null;
+  if (!trimmed.includes('@')) return null;
+  return trimmed.toLowerCase();
+}
+
+function buildIdentityFromAccountInfo(accountInfo: AccountInfo): AccountIdentity {
+  return {
+    accountId: normalizeId(accountInfo.accountId),
+    userId: normalizeId(accountInfo.userId),
+    email: normalizeEmail(accountInfo.email),
+  };
+}
+
+function buildIdentityFromAuthConfig(authConfig: CodexAuthConfig): AccountIdentity {
+  let accountInfo: AccountInfo | null = null;
+  try {
+    accountInfo = parseAccountInfo(authConfig);
+  } catch (error) {
+    console.log('Failed to parse auth token for identity:', error);
+  }
+
+  return {
+    accountId: normalizeId(accountInfo?.accountId ?? authConfig.tokens?.account_id),
+    userId: normalizeId(accountInfo?.userId),
+    email: normalizeEmail(accountInfo?.email),
+  };
+}
+
+function isEmptyIdentity(identity: AccountIdentity): boolean {
+  return !identity.accountId && !identity.userId && !identity.email;
+}
+
+function isIdentityInsufficient(identity: AccountIdentity): boolean {
+  return !identity.userId && !identity.email;
+}
+
+function getMatchRank(a: AccountIdentity, b: AccountIdentity): number {
+  if (a.accountId && b.accountId && a.userId && b.userId) {
+    if (a.accountId === b.accountId && a.userId === b.userId) return 5;
+  }
+  if (a.accountId && b.accountId && a.email && b.email) {
+    if (a.accountId === b.accountId && a.email === b.email) return 4;
+  }
+  if (a.userId && b.userId && a.userId === b.userId) return 3;
+  if (a.email && b.email && a.email === b.email) return 2;
+  if (a.accountId && b.accountId && a.accountId === b.accountId) return 1;
+  return 0;
+}
+
+function findBestMatch(
+  accounts: StoredAccount[],
+  identity: AccountIdentity
+): { index: number; rank: number; count: number } {
+  let bestIndex = -1;
+  let bestRank = 0;
+  let bestUpdatedAt = '';
+  let bestCount = 0;
+
+  accounts.forEach((account, index) => {
+    const rank = getMatchRank(buildIdentityFromAccountInfo(account.accountInfo), identity);
+    if (rank === 0) return;
+    if (rank > bestRank) {
+      bestRank = rank;
+      bestIndex = index;
+      bestUpdatedAt = account.updatedAt;
+      bestCount = 1;
+      return;
+    }
+    if (rank === bestRank) {
+      bestCount += 1;
+      if (!bestUpdatedAt || account.updatedAt > bestUpdatedAt) {
+        bestIndex = index;
+        bestUpdatedAt = account.updatedAt;
+      }
+    }
+  });
+
+  return { index: bestIndex, rank: bestRank, count: bestCount };
+}
+
+const MISSING_IDENTITY_ERROR = 'missing_account_identity';
+
+function createMissingIdentityError(): Error {
+  const error = new Error(MISSING_IDENTITY_ERROR);
+  error.name = 'MissingAccountIdentity';
+  return error;
+}
+
+export function isMissingIdentityError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message === MISSING_IDENTITY_ERROR || error.name === 'MissingAccountIdentity';
+}
+
+function buildFallbackAccountInfo(identity: AccountIdentity): AccountInfo {
+  return {
+    email: identity.email ?? 'Unknown',
+    planType: 'free',
+    accountId: identity.accountId ?? '',
+    userId: identity.userId ?? '',
+    subscriptionActiveUntil: undefined,
+    organizations: [],
+  };
+}
 
 async function saveAccountAuth(accountId: string, authConfig: CodexAuthConfig): Promise<void> {
   await invoke('save_account_auth', {
@@ -91,17 +213,30 @@ export async function saveAccountsStore(store: AccountsStore): Promise<void> {
  */
 export async function addAccount(
   authConfig: CodexAuthConfig,
-  alias?: string
+  alias?: string,
+  options: AddAccountOptions = {}
 ): Promise<StoredAccount> {
   const store = await loadAccountsStore();
-  
-  // 解析账号信息
-  const accountInfo = parseAccountInfo(authConfig);
+
+  let accountInfo: AccountInfo;
+  try {
+    accountInfo = parseAccountInfo(authConfig);
+  } catch (error) {
+    const identity = buildIdentityFromAuthConfig(authConfig);
+    if (!options.allowMissingIdentity) {
+      throw createMissingIdentityError();
+    }
+    accountInfo = buildFallbackAccountInfo(identity);
+  }
+
+  const newIdentity = buildIdentityFromAccountInfo(accountInfo);
+  if (isIdentityInsufficient(newIdentity) && !options.allowMissingIdentity) {
+    throw createMissingIdentityError();
+  }
   
   // 检查是否已存在
-  const existingIndex = store.accounts.findIndex(
-    (acc) => acc.accountInfo.accountId === accountInfo.accountId
-  );
+  const match = findBestMatch(store.accounts, newIdentity);
+  const existingIndex = match.rank >= 2 ? match.index : -1;
   
   const now = new Date().toISOString();
   
@@ -210,10 +345,13 @@ export async function switchToAccount(accountId: string): Promise<void> {
 /**
  * 从文件导入账号
  */
-export async function importAccountFromFile(filePath: string): Promise<StoredAccount> {
+export async function importAccountFromFile(
+  filePath: string,
+  options: AddAccountOptions = {}
+): Promise<StoredAccount> {
   const content = await invoke<string>('read_file_content', { filePath });
   const authConfig = JSON.parse(content) as CodexAuthConfig;
-  return addAccount(authConfig);
+  return addAccount(authConfig, undefined, options);
 }
 
 /**
@@ -232,19 +370,9 @@ export async function getCurrentAuthAccountId(): Promise<string | null> {
   try {
     const authJson = await invoke<string>('read_codex_auth');
     const authConfig = JSON.parse(authJson) as CodexAuthConfig;
-    
-    // 优先从 tokens.account_id 获取
-    if (authConfig.tokens?.account_id) {
-      return authConfig.tokens.account_id;
-    }
-    
-    // 尝试从 JWT 解析
-    if (authConfig.tokens?.id_token) {
-      const accountInfo = parseAccountInfo(authConfig);
-      return accountInfo.accountId;
-    }
-    
-    return null;
+
+    const identity = buildIdentityFromAuthConfig(authConfig);
+    return identity.accountId ?? null;
   } catch (error) {
     console.log('Failed to read current auth:', error);
     return null;
@@ -257,13 +385,20 @@ export async function getCurrentAuthAccountId(): Promise<string | null> {
  * 如果 auth.json 不存在，则清除所有账号的 isActive 状态
  */
 export async function syncCurrentAccount(): Promise<string | null> {
-  const currentAccountId = await getCurrentAuthAccountId();
+  let currentIdentity: AccountIdentity | null = null;
+  try {
+    const authJson = await invoke<string>('read_codex_auth');
+    const authConfig = JSON.parse(authJson) as CodexAuthConfig;
+    currentIdentity = buildIdentityFromAuthConfig(authConfig);
+  } catch (error) {
+    console.log('Failed to read current auth:', error);
+  }
   const store = await loadAccountsStore();
   let matchedId: string | null = null;
   let needsSave = false;
   
   // 如果 auth.json 不存在或无法获取账号ID，清除所有账号的激活状态
-  if (!currentAccountId) {
+  if (!currentIdentity || isEmptyIdentity(currentIdentity)) {
     store.accounts.forEach((acc) => {
       if (acc.isActive) {
         acc.isActive = false;
@@ -278,19 +413,57 @@ export async function syncCurrentAccount(): Promise<string | null> {
     return null;
   }
   
-  // 遍历所有账号，找到匹配的并更新 isActive
-  store.accounts.forEach((acc) => {
-    const isMatch = acc.accountInfo.accountId === currentAccountId;
-    
-    if (isMatch) {
-      matchedId = acc.id;
-      if (!acc.isActive) {
-        acc.isActive = true;
+  let bestRank = 0;
+  let bestIndexes: number[] = [];
+
+  store.accounts.forEach((acc, index) => {
+    const rank = getMatchRank(buildIdentityFromAccountInfo(acc.accountInfo), currentIdentity);
+    if (rank === 0) return;
+    if (rank > bestRank) {
+      bestRank = rank;
+      bestIndexes = [index];
+      return;
+    }
+    if (rank === bestRank) {
+      bestIndexes.push(index);
+    }
+  });
+
+  if (bestRank === 0 || bestIndexes.length === 0) {
+    store.accounts.forEach((acc) => {
+      if (acc.isActive) {
+        acc.isActive = false;
         needsSave = true;
       }
-    } else if (acc.isActive) {
-      acc.isActive = false;
+    });
+
+    if (needsSave) {
+      await saveAccountsStore(store);
+    }
+
+    return null;
+  }
+
+  let targetIndex = bestIndexes[0];
+  const activeIndex = bestIndexes.find((index) => store.accounts[index].isActive);
+  if (typeof activeIndex === 'number') {
+    targetIndex = activeIndex;
+  } else {
+    targetIndex = bestIndexes.reduce((best, index) => {
+      const bestTime = store.accounts[best].updatedAt;
+      const currentTime = store.accounts[index].updatedAt;
+      return currentTime > bestTime ? index : best;
+    }, bestIndexes[0]);
+  }
+
+  store.accounts.forEach((acc, index) => {
+    const shouldBeActive = index === targetIndex;
+    if (acc.isActive !== shouldBeActive) {
+      acc.isActive = shouldBeActive;
       needsSave = true;
+    }
+    if (shouldBeActive) {
+      matchedId = acc.id;
     }
   });
   

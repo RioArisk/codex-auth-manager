@@ -39,8 +39,8 @@ export function parseAccountInfo(authConfig: CodexAuthConfig): AccountInfo {
   return {
     email: payload['email'] as string || 'Unknown',
     planType: (authData['chatgpt_plan_type'] as string || 'free') as AccountInfo['planType'],
-    accountId: authData['chatgpt_account_id'] as string || authConfig.tokens.account_id,
-    userId: authData['chatgpt_user_id'] as string || '',
+    accountId: (authData['chatgpt_account_id'] as string | undefined) || authConfig.tokens.account_id || '',
+    userId: (authData['chatgpt_user_id'] as string | undefined) || '',
     subscriptionActiveUntil: authData['chatgpt_subscription_active_until'] as string | undefined,
     organizations: (authData['organizations'] as AccountInfo['organizations']) || [],
   };

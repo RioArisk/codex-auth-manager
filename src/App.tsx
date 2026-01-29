@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAccountStore } from './stores/useAccountStore';
 import { useAutoRefresh } from './hooks';
 import { invoke } from '@tauri-apps/api/core';
+import { isMissingIdentityError, type AddAccountOptions } from './utils/storage';
 import {
   AccountCard,
   AddAccountModal,
@@ -48,6 +49,12 @@ function App() {
     accountId: null,
     accountName: '',
   });
+  const [identityConfirm, setIdentityConfirm] = useState<{
+    isOpen: boolean;
+    authJson: string;
+    alias?: string;
+    source: 'manual' | 'sync' | 'auto';
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -90,11 +97,16 @@ function App() {
     setIsInitializing(true);
 
     const runAutoImport = async () => {
+      let authJson: string | null = null;
       try {
-        const authJson = await invoke<string>('read_codex_auth');
+        authJson = await invoke<string>('read_codex_auth');
         await addAccount(authJson);
         setShouldInitialRefresh(true);
-      } catch {
+      } catch (error) {
+        if (authJson && isMissingIdentityError(error)) {
+          setIdentityConfirm({ isOpen: true, authJson, source: 'auto' });
+          clearError();
+        }
         // No local auth or invalid auth; fall back to empty state.
       } finally {
         try {
@@ -108,7 +120,7 @@ function App() {
     };
 
     void runAutoImport();
-  }, [accounts.length, addAccount, config.hasInitialized, hasLoadedAccounts, updateConfig]);
+  }, [accounts.length, addAccount, clearError, config.hasInitialized, hasLoadedAccounts, updateConfig]);
 
   useEffect(() => {
     if (!shouldInitialRefresh || accounts.length === 0) return;
@@ -144,16 +156,53 @@ function App() {
   };
 
   const handleAddAccount = async (authJson: string, alias?: string) => {
-    await addAccount(authJson, alias);
+    try {
+      await addAccount(authJson, alias);
+    } catch (error) {
+      if (isMissingIdentityError(error)) {
+        setIdentityConfirm({ isOpen: true, authJson, alias, source: 'manual' });
+        clearError();
+        return;
+      }
+      throw error;
+    }
   };
 
   const handleSyncAccount = async () => {
     try {
       const authJson = await invoke<string>('read_codex_auth');
-      await addAccount(authJson);
+      try {
+        await addAccount(authJson);
+      } catch (error) {
+        if (isMissingIdentityError(error)) {
+          setIdentityConfirm({ isOpen: true, authJson, source: 'sync' });
+          clearError();
+          return;
+        }
+        throw error;
+      }
     } catch {
       setError('未找到当前Codex配置文件。请确保已登录Codex。');
     }
+  };
+
+  const handleConfirmIdentityImport = async () => {
+    if (!identityConfirm) return;
+    const { authJson, alias, source } = identityConfirm;
+    setIdentityConfirm(null);
+    const options: AddAccountOptions = { allowMissingIdentity: true };
+    try {
+      await addAccount(authJson, alias, options);
+      if (source === 'auto') {
+        setShouldInitialRefresh(true);
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '导入失败');
+    }
+  };
+
+  const handleCancelIdentityImport = () => {
+    setIdentityConfirm(null);
   };
 
   const handleDeleteClick = (accountId: string, accountName: string) => {
@@ -351,6 +400,18 @@ function App() {
         variant="danger"
         onConfirm={handleConfirmDelete}
         onCancel={() => setDeleteConfirm({ isOpen: false, accountId: null, accountName: '' })}
+      />
+
+      {/* 身份信息缺失确认 */}
+      <ConfirmDialog
+        isOpen={!!identityConfirm?.isOpen}
+        title="账号身份信息缺失"
+        message="未检测到有效的账号邮箱或用户ID。继续导入可能导致账号无法区分。建议检查文件后重新导入。"
+        confirmText="继续导入"
+        cancelText="检查后重试"
+        variant="warning"
+        onConfirm={handleConfirmIdentityImport}
+        onCancel={handleCancelIdentityImport}
       />
 
       {/* 右上角提示 */}
