@@ -23,6 +23,55 @@ interface RustUsageResult {
   usage?: RustUsageData;
 }
 
+
+const formatResetTime = (resetTimeMs: number, includeWeekday: boolean): string => {
+  if (!Number.isFinite(resetTimeMs) || resetTimeMs <= 0) {
+    throw new Error('Invalid reset timestamp');
+  }
+
+  const date = new Date(resetTimeMs);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('Invalid reset timestamp');
+  }
+
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  if (!includeWeekday) {
+    return `${hours}:${minutes}`;
+  }
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${month}-${day} ${hours}:${minutes}`;
+};
+
+const buildUsageInfo = (usageData: RustUsageData, planType?: string): UsageInfo => ({
+  status: 'ok',
+  planType,
+  fiveHourLimit: {
+    percentLeft: Math.round(usageData.five_hour_percent_left),
+    resetTime: formatResetTime(usageData.five_hour_reset_time_ms, false),
+  },
+  weeklyLimit: {
+    percentLeft: Math.round(usageData.weekly_percent_left),
+    resetTime: formatResetTime(usageData.weekly_reset_time_ms, true),
+  },
+  codeReviewLimit: Number.isFinite(usageData.code_review_percent_left) &&
+    Number.isFinite(usageData.code_review_reset_time_ms)
+    ? {
+        percentLeft: Math.round(usageData.code_review_percent_left as number),
+        resetTime: formatResetTime(usageData.code_review_reset_time_ms as number, false),
+      }
+    : undefined,
+  lastUpdated: usageData.last_updated,
+});
+
+const buildStatusUsageInfo = (result: RustUsageResult): UsageInfo => ({
+  status: result.status,
+  message: result.message,
+  planType: result.plan_type,
+  lastUpdated: new Date().toISOString(),
+});
+
 /**
  * 鑷姩鍒锋柊鐢ㄩ噺鏁版嵁鐨凥ook
  */
@@ -45,53 +94,6 @@ export function useAutoRefresh() {
   type RefreshResult = { status: RefreshStatus; message?: string };
   type RefreshAllResult = { updated: number; missing: number; skipped: boolean };
 
-  const formatResetTime = (resetTimeMs: number, includeWeekday: boolean): string => {
-    if (!Number.isFinite(resetTimeMs) || resetTimeMs <= 0) {
-      throw new Error('Invalid reset timestamp');
-    }
-
-    const date = new Date(resetTimeMs);
-    if (Number.isNaN(date.getTime())) {
-      throw new Error('Invalid reset timestamp');
-    }
-
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    if (!includeWeekday) {
-      return `${hours}:${minutes}`;
-    }
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${month}-${day} ${hours}:${minutes}`;
-  };
-
-  const buildUsageInfo = (usageData: RustUsageData, planType?: string): UsageInfo => ({
-    status: 'ok',
-    planType,
-    fiveHourLimit: {
-      percentLeft: Math.round(usageData.five_hour_percent_left),
-      resetTime: formatResetTime(usageData.five_hour_reset_time_ms, false),
-    },
-    weeklyLimit: {
-      percentLeft: Math.round(usageData.weekly_percent_left),
-      resetTime: formatResetTime(usageData.weekly_reset_time_ms, true),
-    },
-    codeReviewLimit: Number.isFinite(usageData.code_review_percent_left) &&
-      Number.isFinite(usageData.code_review_reset_time_ms)
-      ? {
-          percentLeft: Math.round(usageData.code_review_percent_left as number),
-          resetTime: formatResetTime(usageData.code_review_reset_time_ms as number, false),
-        }
-      : undefined,
-    lastUpdated: usageData.last_updated,
-  });
-
-  const buildStatusUsageInfo = (result: RustUsageResult): UsageInfo => ({
-    status: result.status,
-    message: result.message,
-    planType: result.plan_type,
-    lastUpdated: new Date().toISOString(),
-  });
   
   /**
    * 获取单个账号的用量信息
@@ -114,24 +116,15 @@ export function useAutoRefresh() {
           status: 'success',
         };
       }
-
-      if (usageResult.status === 'no_usage') {
-        return { usage: buildStatusUsageInfo(usageResult), status: 'no-usage' };
-      }
-
-      if (usageResult.status === 'missing_account_id') {
-        return { usage: buildStatusUsageInfo(usageResult), status: 'missing-account-id' };
-      }
-
-      if (usageResult.status === 'missing_token') {
-        return { usage: buildStatusUsageInfo(usageResult), status: 'missing-token' };
-      }
-
-      if (usageResult.status === 'no_codex_access') {
-        return { usage: buildStatusUsageInfo(usageResult), status: 'no-codex-access' };
-      }
-
-      return { usage: buildStatusUsageInfo(usageResult), status: 'error' };
+      const statusMap: Partial<Record<RustUsageResult['status'], RefreshStatus>> = {
+        no_usage: 'no-usage',
+        missing_account_id: 'missing-account-id',
+        missing_token: 'missing-token',
+        no_codex_access: 'no-codex-access',
+        error: 'error',
+      };
+      const mappedStatus = statusMap[usageResult.status] ?? 'error';
+      return { usage: buildStatusUsageInfo(usageResult), status: mappedStatus };
     } catch (error) {
       console.error(`Failed to fetch usage for account ${accountId}:`, error);
       return {

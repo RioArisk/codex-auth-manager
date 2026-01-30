@@ -287,7 +287,9 @@ function App() {
           isRefreshing={isRefreshing}
           isRefreshingAll={isRefreshing && refreshingAccountId === 'all'}
           isLoading={isLoading}
-        />
+        >
+          {accounts.length > 0 ? <StatsSummary accounts={accounts} embedded /> : null}
+        </Header>
 
         <main className="max-w-7xl mx-auto px-6 py-8">
           {/* 错误提示 */}
@@ -340,8 +342,6 @@ function App() {
           {/* 有账号时显示统计和列表 */}
           {accounts.length > 0 && (
             <>
-              <StatsSummary accounts={accounts} />
-
               <div className="dash-card p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div>
@@ -352,11 +352,11 @@ function App() {
                     共 {accounts.length} 个
                   </span>
                 </div>
-                <div className="flex flex-col gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {accounts.map((account, index) => (
                     <div
                       key={account.id}
-                      className="animate-fade-in"
+                      className="animate-fade-in h-full"
                       style={{ animationDelay: `${index * 50}ms` }}
                     >
                       <AccountCard
@@ -430,7 +430,7 @@ function App() {
       {/* 底部状态栏 */}
       <footer className="fixed bottom-0 left-0 right-0 bg-white/70 border-t border-[var(--dash-border)] py-2 px-5 backdrop-blur z-40">
         <div className="max-w-7xl mx-auto flex items-center justify-between text-xs text-[var(--dash-text-muted)]">
-          <span>Codex Manager v0.1.1</span>
+          <span>Codex Manager v0.1.2</span>
           <span>数据存储于本地</span>
         </div>
       </footer>

@@ -174,8 +174,9 @@ export async function loadAccountsStore(): Promise<AccountsStore> {
         await saveAccountAuth(account.id, account.authConfig);
         needsSave = true;
       }
-      const { authConfig, ...rest } = account;
-      normalizedAccounts.push(rest);
+      const normalizedAccount = { ...account } as StoredAccount & { authConfig?: CodexAuthConfig };
+      delete normalizedAccount.authConfig;
+      normalizedAccounts.push(normalizedAccount);
     }
 
     const normalizedStore: AccountsStore = {
@@ -221,7 +222,7 @@ export async function addAccount(
   let accountInfo: AccountInfo;
   try {
     accountInfo = parseAccountInfo(authConfig);
-  } catch (error) {
+  } catch {
     const identity = buildIdentityFromAuthConfig(authConfig);
     if (!options.allowMissingIdentity) {
       throw createMissingIdentityError();

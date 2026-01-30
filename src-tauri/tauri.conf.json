@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Codex Manager",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "com.codex-manager.app",
   "build": {
     "frontendDist": "../dist",

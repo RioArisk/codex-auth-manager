@@ -1,6 +1,6 @@
 [package]
 name = "codex-manager"
-version = "0.1.1"
+version = "0.1.2"
 description = "Codex Account Manager - Manage multiple Codex accounts"
 authors = ["you"]
 license = "MIT"
