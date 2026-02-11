@@ -24,6 +24,7 @@ function App() {
     addAccount,
     removeAccount,
     switchToAccount,
+    syncCurrentAccount,
     updateConfig,
     setError,
     clearError,
@@ -181,6 +182,9 @@ function App() {
         }
         throw error;
       }
+      // 同步完成后立即更新激活状态并刷新用量
+      await syncCurrentAccount();
+      setShouldInitialRefresh(true);
     } catch {
       setError('未找到当前Codex配置文件。请确保已登录Codex。');
     }

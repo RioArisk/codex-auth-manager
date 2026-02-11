@@ -74,6 +74,10 @@ function isIdentityInsufficient(identity: AccountIdentity): boolean {
 }
 
 function getMatchRank(a: AccountIdentity, b: AccountIdentity): number {
+  // 当两者都有 accountId 且不同时，属于不同工作空间（如个人 vs Team），
+  // 即使 email/userId 相同也不应视为同一账号
+  if (a.accountId && b.accountId && a.accountId !== b.accountId) return 0;
+
   if (a.accountId && b.accountId && a.userId && b.userId) {
     if (a.accountId === b.accountId && a.userId === b.userId) return 5;
   }
@@ -257,9 +261,22 @@ export async function addAccount(
   }
   
   // 创建新账号
+  // 同邮箱不同工作空间时自动添加计划类型后缀以区分
+  let autoAlias = alias || accountInfo.email.split('@')[0];
+  if (!alias) {
+    const newEmail = normalizeEmail(accountInfo.email);
+    const hasSameEmail = newEmail && store.accounts.some(
+      (acc) => normalizeEmail(acc.accountInfo.email) === newEmail
+    );
+    if (hasSameEmail) {
+      const planLabel = accountInfo.planType.charAt(0).toUpperCase() + accountInfo.planType.slice(1);
+      autoAlias = `${autoAlias} (${planLabel})`;
+    }
+  }
+
   const newAccount: StoredAccount = {
     id: generateId(),
-    alias: alias || accountInfo.email.split('@')[0],
+    alias: autoAlias,
     accountInfo,
     isActive: store.accounts.length === 0, // 第一个账号默认激活
     createdAt: now,

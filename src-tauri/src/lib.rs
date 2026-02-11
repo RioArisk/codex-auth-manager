@@ -882,27 +882,56 @@ async fn get_codex_wham_usage(
     }
 
     let client = client_builder.build().map_err(|e| e.to_string())?;
-    let response = match client
-        .get("https://chatgpt.com/backend-api/wham/usage")
-        .header("Authorization", format!("Bearer {}", access_token.unwrap()))
-        .header("Accept", "application/json")
-        .header("ChatGPT-Account-Id", chatgpt_account_id.unwrap())
-        .send()
-        .await
-    {
+
+    let send_request = || {
+        client
+            .get("https://chatgpt.com/backend-api/wham/usage")
+            .header("Authorization", format!("Bearer {}", access_token.as_deref().unwrap()))
+            .header("Accept", "application/json")
+            .header("ChatGPT-Account-Id", chatgpt_account_id.as_deref().unwrap())
+            .send()
+    };
+
+    // 首次请求，失败后重试一次（处理网络波动等无状态码的异常）
+    let response = match send_request().await {
         Ok(resp) => resp,
-        Err(err) => {
-            return Ok(UsageResult {
-                status: "error".to_string(),
-                message: Some(err.to_string()),
-                plan_type: None,
-                usage: None,
-            })
+        Err(first_err) => {
+            log::warn!("wham/usage 首次请求失败，1秒后重试: {}", first_err);
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            match send_request().await {
+                Ok(resp) => resp,
+                Err(retry_err) => {
+                    return Ok(UsageResult {
+                        status: "error".to_string(),
+                        message: Some(format!("请求失败（已重试）: {}", retry_err)),
+                        plan_type: None,
+                        usage: None,
+                    })
+                }
+            }
         }
     };
 
     let status = response.status();
     let body = response.text().await.map_err(|e| e.to_string())?;
+
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(UsageResult {
+            status: "expired".to_string(),
+            message: Some("Token 已过期或无效".to_string()),
+            plan_type: None,
+            usage: None,
+        });
+    }
+
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(UsageResult {
+            status: "forbidden".to_string(),
+            message: Some("账号已被封禁或无权访问".to_string()),
+            plan_type: None,
+            usage: None,
+        });
+    }
 
     if !status.is_success() {
         return Ok(UsageResult {

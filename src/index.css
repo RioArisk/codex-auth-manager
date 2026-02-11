@@ -138,6 +138,17 @@ select {
   box-shadow: 0 20px 42px rgba(47, 107, 255, 0.16);
 }
 
+.account-card--error {
+  background: rgba(254, 242, 242, 0.6);
+  border-color: rgba(239, 68, 68, 0.3);
+  box-shadow: 0 16px 36px rgba(239, 68, 68, 0.08);
+}
+
+.account-card--error.account-card--active {
+  border-color: rgba(239, 68, 68, 0.5);
+  box-shadow: 0 20px 42px rgba(239, 68, 68, 0.16);
+}
+
 .account-card__header {
   display: flex;
   align-items: flex-start;

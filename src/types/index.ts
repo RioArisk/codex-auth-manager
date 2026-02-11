@@ -26,7 +26,7 @@ export interface AccountInfo {
 
 // 用量信息
 export interface UsageInfo {
-  status?: 'ok' | 'missing_account_id' | 'missing_token' | 'no_codex_access' | 'no_usage' | 'error';
+  status?: 'ok' | 'missing_account_id' | 'missing_token' | 'no_codex_access' | 'no_usage' | 'expired' | 'forbidden' | 'error';
   message?: string;
   planType?: string;
   contextWindow?: {

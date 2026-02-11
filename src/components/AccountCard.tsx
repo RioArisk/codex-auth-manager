@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import type { StoredAccount } from '../types';
 import UsageBar from './UsageBar';
 
@@ -25,6 +25,13 @@ const planTypeLabels: Record<string, string> = {
   team: 'Team',
 };
 
+// 账号异常状态配置
+const accountErrorStates: Record<string, { label: string; className: string }> = {
+  expired: { label: '已过期', className: 'bg-red-50 text-red-600 border-red-200' },
+  forbidden: { label: '已封号', className: 'bg-red-50 text-red-600 border-red-200' },
+  error: { label: '异常', className: 'bg-red-50 text-red-600 border-red-200' },
+};
+
 export const AccountCard: React.FC<AccountCardProps> = ({
   account,
   onSwitch,
@@ -41,6 +48,10 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   const codeReviewLeft = usageInfo?.codeReviewLimit?.percentLeft;
   const fiveHourReset = usageInfo?.fiveHourLimit?.resetTime;
   const weeklyReset = usageInfo?.weeklyLimit?.resetTime;
+
+  // 判断账号是否处于异常状态
+  const errorState = usageInfo?.status ? accountErrorStates[usageInfo.status] : undefined;
+  const isErrorAccount = !!errorState;
 
   const normalizeWeeklyReset = (value?: string) => {
     if (!value) return null;
@@ -74,13 +85,21 @@ export const AccountCard: React.FC<AccountCardProps> = ({
 
   const lastRefreshedText = formatLastRefreshed(usageInfo?.lastUpdated);
 
+  // 异常账号头像样式
+  const avatarClass = isErrorAccount
+    ? 'w-11 h-11 rounded-2xl bg-red-100 text-red-500 flex items-center justify-center font-semibold'
+    : 'w-11 h-11 rounded-2xl bg-[var(--dash-accent-soft)] text-[var(--dash-accent)] flex items-center justify-center font-semibold';
+
+  // 异常账号整体卡片样式
+  const cardClass = isErrorAccount
+    ? `account-card account-card--error ${isActive ? 'account-card--active' : ''}`
+    : `account-card ${isActive ? 'account-card--active' : ''}`;
+
   return (
-    <div
-      className={`account-card ${isActive ? 'account-card--active' : ''}`}
-    >
+    <div className={cardClass}>
       <div className="account-card__header">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="w-11 h-11 rounded-2xl bg-[var(--dash-accent-soft)] text-[var(--dash-accent)] flex items-center justify-center font-semibold">
+          <div className={avatarClass}>
             {accountInfo.email.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
@@ -98,6 +117,11 @@ export const AccountCard: React.FC<AccountCardProps> = ({
               >
                 {planTypeLabels[accountInfo.planType] || accountInfo.planType}
               </span>
+              {errorState && (
+                <span className={`dash-pill ${errorState.className} shrink-0`}>
+                  {errorState.label}
+                </span>
+              )}
             </div>
             <p
               className="text-xs text-[var(--dash-text-secondary)] truncate whitespace-nowrap mt-1"
@@ -198,9 +222,15 @@ export const AccountCard: React.FC<AccountCardProps> = ({
           )}
         </div>
 
-        {usageInfo?.status && usageInfo.status !== 'ok' && (
+        {usageInfo?.status && usageInfo.status !== 'ok' && !isErrorAccount && (
           <div className="w-full rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700 truncate">
             {usageInfo.message || '用量信息不可用'}
+          </div>
+        )}
+
+        {isErrorAccount && usageInfo?.message && (
+          <div className="w-full rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 truncate">
+            {usageInfo.message}
           </div>
         )}
 
