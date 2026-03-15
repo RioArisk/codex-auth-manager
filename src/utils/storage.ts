@@ -47,6 +47,21 @@ type AccountsBackupFile = {
   exportedAt: string;
   accounts: AccountBackupEntry[];
 };
+
+function normalizePlanType(
+  value: string | null | undefined
+): AccountInfo['planType'] | null {
+  switch (value) {
+    case 'free':
+    case 'plus':
+    case 'pro':
+    case 'team':
+      return value;
+    default:
+      return null;
+  }
+}
+
 function normalizeId(value?: string | null): string | null {
   const trimmed = (value ?? '').trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -217,12 +232,25 @@ function mergeWorkspaceMetadata(
 ): AccountInfo {
   if (!metadata) return accountInfo;
 
+  const currentPlanType = normalizePlanType(accountInfo.planType) ?? 'free';
+  const metadataPlanType = normalizePlanType(metadata.planType);
+  const accountStructure = metadata.accountStructure ?? accountInfo.accountStructure;
+
+  let mergedPlanType = currentPlanType;
+  if (metadataPlanType) {
+    if (accountStructure === 'workspace') {
+      mergedPlanType = metadataPlanType;
+    } else if (currentPlanType === 'free' && metadataPlanType !== 'free') {
+      mergedPlanType = metadataPlanType;
+    }
+  }
+
   return {
     ...accountInfo,
     accountUserId: metadata.accountUserId ?? accountInfo.accountUserId,
-    accountStructure: metadata.accountStructure ?? accountInfo.accountStructure,
+    accountStructure,
     workspaceName: metadata.workspaceName ?? accountInfo.workspaceName,
-    planType: (metadata.planType ?? accountInfo.planType) as AccountInfo['planType'],
+    planType: mergedPlanType,
   };
 }
 
@@ -413,8 +441,22 @@ export async function refreshAccountsWorkspaceMetadata(config: AppConfig): Promi
 
   const updatedAccounts = await Promise.all(
     store.accounts.map(async (account) => {
+      let baseAccountInfo = account.accountInfo;
+      try {
+        const authConfig = await loadAccountAuth(account.id);
+        const parsedAccountInfo = parseAccountInfo(authConfig);
+        baseAccountInfo = {
+          ...account.accountInfo,
+          ...parsedAccountInfo,
+          accountStructure: account.accountInfo.accountStructure,
+          workspaceName: account.accountInfo.workspaceName,
+        };
+      } catch (error) {
+        console.log(`Failed to reload account info from auth for account ${account.id}:`, error);
+      }
+
       const metadata = await fetchWorkspaceMetadata(account.id, config);
-      const accountInfo = mergeWorkspaceMetadata(account.accountInfo, metadata);
+      const accountInfo = mergeWorkspaceMetadata(baseAccountInfo, metadata);
 
       if (JSON.stringify(accountInfo) === JSON.stringify(account.accountInfo)) {
         return account;
