@@ -105,7 +105,8 @@ function App() {
   const autoImportInFlightRef = useRef(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isHandlingWindowCloseRef = useRef(false);
-  const ignoreNextCloseRequestRef = useRef(false);
+  const ignoreCloseRequestUntilRef = useRef(0);
+  const closeBehaviorRef = useRef<AppConfig['closeBehavior']>(config.closeBehavior);
   const [refreshingAccountId, setRefreshingAccountId] = useState<string | 'all' | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
@@ -207,6 +208,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    closeBehaviorRef.current = config.closeBehavior;
+  }, [config.closeBehavior]);
+
+  useEffect(() => {
     const currentWindow = getCurrentWindow();
     let disposed = false;
     let unlistenWindowClose: (() => void) | null = null;
@@ -216,8 +221,7 @@ function App() {
 
     const registerListeners = async () => {
       unlistenWindowClose = await currentWindow.onCloseRequested(async (event) => {
-        if (ignoreNextCloseRequestRef.current) {
-          ignoreNextCloseRequestRef.current = false;
+        if (Date.now() < ignoreCloseRequestUntilRef.current) {
           event.preventDefault();
           return;
         }
@@ -228,18 +232,20 @@ function App() {
 
         event.preventDefault();
 
-        if (config.closeBehavior === 'tray') {
+        const closeBehavior = closeBehaviorRef.current;
+
+        if (closeBehavior === 'tray') {
           try {
-            ignoreNextCloseRequestRef.current = true;
+            ignoreCloseRequestUntilRef.current = Date.now() + 800;
             await invoke('hide_to_tray');
           } catch (currentError) {
-            ignoreNextCloseRequestRef.current = false;
+            ignoreCloseRequestUntilRef.current = 0;
             setError(currentError instanceof Error ? currentError.message : '最小化到托盘失败');
           }
           return;
         }
 
-        if (config.closeBehavior === 'exit') {
+        if (closeBehavior === 'exit') {
           isHandlingWindowCloseRef.current = true;
           try {
             await invoke('exit_application');
@@ -274,6 +280,9 @@ function App() {
         if (!focused || !hasLoadedAccounts) {
           return;
         }
+        if (!disposed) {
+          setShowCloseBehaviorDialog(false);
+        }
         await loadAccounts();
       });
     };
@@ -287,7 +296,7 @@ function App() {
       unlistenBackgroundRefresh?.();
       unlistenFocusChange?.();
     };
-  }, [config.closeBehavior, hasLoadedAccounts, loadAccounts, refreshSingleAccount, setError]);
+  }, [hasLoadedAccounts, loadAccounts, refreshSingleAccount, setError]);
 
   useEffect(() => {
     if (!hasLoadedAccounts) return;
@@ -606,10 +615,10 @@ function App() {
 
     if (behavior === 'tray') {
       try {
-        ignoreNextCloseRequestRef.current = true;
+        ignoreCloseRequestUntilRef.current = Date.now() + 800;
         await invoke('hide_to_tray');
       } catch (currentError) {
-        ignoreNextCloseRequestRef.current = false;
+        ignoreCloseRequestUntilRef.current = 0;
         setError(currentError instanceof Error ? currentError.message : '最小化到托盘失败');
       }
       return;
