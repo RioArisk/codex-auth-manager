@@ -1,6 +1,7 @@
 export { AccountCard } from './AccountCard';
 export { AccountFilters } from './AccountFilters';
 export { AddAccountModal } from './AddAccountModal';
+export { CloseBehaviorDialog } from './CloseBehaviorDialog';
 export { ConfirmDialog } from './ConfirmDialog';
 export { EmptyState } from './EmptyState';
 export { Header } from './Header';

@@ -40,6 +40,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
   config: {
     autoRefreshInterval: 30,
     codexPath: 'codex',
+    closeBehavior: 'ask',
     theme: 'dark',
     hasInitialized: false,
     proxyEnabled: false,

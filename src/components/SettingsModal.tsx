@@ -16,6 +16,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(config.autoRefreshInterval);
   const [codexPath, setCodexPath] = useState(config.codexPath);
+  const [closeBehavior, setCloseBehavior] = useState(config.closeBehavior);
   const [proxyEnabled, setProxyEnabled] = useState(config.proxyEnabled);
   const [proxyUrl, setProxyUrl] = useState(config.proxyUrl);
   const [isSaving, setIsSaving] = useState(false);
@@ -24,16 +25,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (!isOpen) return;
     setAutoRefreshInterval(config.autoRefreshInterval);
     setCodexPath(config.codexPath);
+    setCloseBehavior(config.closeBehavior);
     setProxyEnabled(config.proxyEnabled);
     setProxyUrl(config.proxyUrl);
-  }, [isOpen, config.autoRefreshInterval, config.codexPath, config.proxyEnabled, config.proxyUrl]);
+  }, [isOpen, config.autoRefreshInterval, config.codexPath, config.closeBehavior, config.proxyEnabled, config.proxyUrl]);
 
   if (!isOpen) return null;
 
   const handleSave = async () => {
+    const normalizedAutoRefreshInterval =
+      autoRefreshInterval <= 0 ? 0 : Math.max(1, Math.round(autoRefreshInterval));
+
     setIsSaving(true);
     try {
-      await onSave({ autoRefreshInterval, codexPath, proxyEnabled, proxyUrl });
+      await onSave({
+        autoRefreshInterval: normalizedAutoRefreshInterval,
+        codexPath,
+        closeBehavior,
+        proxyEnabled,
+        proxyUrl,
+      });
       onClose();
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -68,7 +79,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 type="range"
                 min="0"
                 max="60"
-                step="5"
+                step="1"
                 value={autoRefreshInterval}
                 onChange={(e) => setAutoRefreshInterval(Number(e.target.value))}
                 className="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-blue-500"
@@ -78,7 +89,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </span>
             </div>
             <p className="text-xs text-[var(--dash-text-muted)] mt-2">
-              设置为 0 禁用自动刷新
+              设置为 0 禁用自动刷新；启用后最小为 1 分钟
             </p>
           </div>
 
@@ -97,6 +108,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               />
               <p className="text-xs text-[var(--dash-text-muted)] mt-1">
                 快速登录时将优先使用这里配置的命令或绝对路径
+              </p>
+            </div>
+            <div>
+              <label className="block text-[var(--dash-text-secondary)] text-xs font-medium mb-2">
+                点击关闭按钮时
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { value: 'ask', label: '每次询问' },
+                  { value: 'tray', label: '最小化到托盘' },
+                  { value: 'exit', label: '直接退出' },
+                ].map((option) => {
+                  const selected = closeBehavior === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setCloseBehavior(option.value as AppConfig['closeBehavior'])}
+                      className={`h-10 rounded-xl border text-sm transition-colors ${
+                        selected
+                          ? 'border-blue-500 bg-blue-50 text-blue-600'
+                          : 'border-[var(--dash-border)] bg-white text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-[var(--dash-text-muted)] mt-1">
+                选择“每次询问”后，点击右上角关闭按钮时会再次弹出操作选择
               </p>
             </div>
           </div>

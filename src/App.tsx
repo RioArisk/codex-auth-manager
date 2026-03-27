@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import {
   AccountCard,
   AccountFilters,
   AddAccountModal,
+  CloseBehaviorDialog,
   ConfirmDialog,
   EmptyState,
   Header,
@@ -15,7 +18,7 @@ import {
 } from './components';
 import { useAutoRefresh } from './hooks';
 import { useAccountStore } from './stores/useAccountStore';
-import type { StoredAccount } from './types';
+import type { AppConfig, StoredAccount } from './types';
 import {
   DEFAULT_ACCOUNT_FILTERS,
   type AccountFilterState,
@@ -45,6 +48,15 @@ type QuickLoginState = {
   detail?: string | null;
   canClose?: boolean;
   canCancel?: boolean;
+};
+
+type TrayAccountSwitchedPayload = {
+  accountId?: string;
+};
+
+type BackgroundUsageRefreshedPayload = {
+  updatedCount?: number;
+  finishedAt?: string;
 };
 
 const formatChangedAtDetail = (changedAt?: string) => {
@@ -84,6 +96,7 @@ function App() {
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [shouldInitialRefresh, setShouldInitialRefresh] = useState(false);
   const [hasLoadedAccounts, setHasLoadedAccounts] = useState(false);
@@ -91,6 +104,7 @@ function App() {
   const [filters, setFilters] = useState<AccountFilterState>(DEFAULT_ACCOUNT_FILTERS);
   const autoImportInFlightRef = useRef(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isHandlingWindowCloseRef = useRef(false);
   const [refreshingAccountId, setRefreshingAccountId] = useState<string | 'all' | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
@@ -190,6 +204,89 @@ function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    const currentWindow = getCurrentWindow();
+    let disposed = false;
+    let unlistenWindowClose: (() => void) | null = null;
+    let unlistenTraySwitch: (() => void) | null = null;
+    let unlistenBackgroundRefresh: (() => void) | null = null;
+    let unlistenFocusChange: (() => void) | null = null;
+
+    const registerListeners = async () => {
+      unlistenWindowClose = await currentWindow.onCloseRequested(async (event) => {
+        if (isHandlingWindowCloseRef.current) {
+          return;
+        }
+
+        event.preventDefault();
+
+        if (config.closeBehavior === 'tray') {
+          try {
+            await invoke('hide_to_tray');
+          } catch (currentError) {
+            setError(currentError instanceof Error ? currentError.message : '最小化到托盘失败');
+          }
+          return;
+        }
+
+        if (config.closeBehavior === 'exit') {
+          isHandlingWindowCloseRef.current = true;
+          try {
+            await invoke('exit_application');
+          } finally {
+            isHandlingWindowCloseRef.current = false;
+          }
+          return;
+        }
+
+        setShowCloseBehaviorDialog(true);
+      });
+
+      unlistenTraySwitch = await listen<TrayAccountSwitchedPayload>('tray-account-switched', async (event) => {
+        await loadAccounts();
+        const targetAccountId = event.payload?.accountId;
+        if (targetAccountId) {
+          await refreshSingleAccount(targetAccountId);
+        }
+        if (!disposed) {
+          showToast('已通过托盘切换账号', 'success');
+        }
+      });
+
+      unlistenBackgroundRefresh = await listen<BackgroundUsageRefreshedPayload>(
+        'background-usage-refreshed',
+        async () => {
+          await loadAccounts();
+        }
+      );
+
+      unlistenFocusChange = await currentWindow.onFocusChanged(async ({ payload: focused }) => {
+        if (!focused || !hasLoadedAccounts) {
+          return;
+        }
+        await loadAccounts();
+      });
+    };
+
+    void registerListeners();
+
+    return () => {
+      disposed = true;
+      unlistenWindowClose?.();
+      unlistenTraySwitch?.();
+      unlistenBackgroundRefresh?.();
+      unlistenFocusChange?.();
+    };
+  }, [config.closeBehavior, hasLoadedAccounts, loadAccounts, refreshSingleAccount, setError]);
+
+  useEffect(() => {
+    if (!hasLoadedAccounts) return;
+
+    void invoke('refresh_tray_menu').catch((currentError) => {
+      console.error('Failed to refresh tray menu:', currentError);
+    });
+  }, [accounts, config.closeBehavior, hasLoadedAccounts]);
 
   const showToast = (message: string, tone: 'success' | 'warning' = 'success') => {
     if (toastTimerRef.current) {
@@ -315,9 +412,6 @@ function App() {
         throw currentError;
       }
 
-      await syncCurrentAccount();
-      setShouldInitialRefresh(true);
-
       setQuickLoginState({
         isOpen: true,
         phase: 'success',
@@ -343,6 +437,9 @@ function App() {
 
   const syncCurrentCodexAccount = async (): Promise<boolean> => {
     try {
+      const previousAccountIds = new Set(
+        useAccountStore.getState().accounts.map((account) => account.id)
+      );
       const authJson = await invoke<string>('read_codex_auth');
       try {
         await addAccount(authJson);
@@ -353,6 +450,13 @@ function App() {
           return false;
         }
         throw currentError;
+      }
+
+      const nextAccounts = useAccountStore.getState().accounts;
+      const addedNewAccount = nextAccounts.some((account) => !previousAccountIds.has(account.id));
+      if (addedNewAccount) {
+        showToast('已导入当前登录账号，但未自动切换', 'success');
+        return true;
       }
 
       await syncCurrentAccount();
@@ -426,7 +530,7 @@ function App() {
     const options: AddAccountOptions = { allowMissingIdentity: true };
     try {
       await addAccount(authJson, alias, options);
-      if (source === 'auto' || source === 'quick-login') {
+      if (source === 'auto') {
         await syncCurrentAccount();
         setShouldInitialRefresh(true);
       }
@@ -479,6 +583,29 @@ function App() {
 
   const handleToggleProxy = async () => {
     await updateConfig({ proxyEnabled: !config.proxyEnabled });
+  };
+
+  const handleApplyCloseBehavior = async (
+    behavior: Exclude<AppConfig['closeBehavior'], 'ask'>,
+    remember: boolean
+  ) => {
+    setShowCloseBehaviorDialog(false);
+
+    if (remember) {
+      await updateConfig({ closeBehavior: behavior });
+    }
+
+    if (behavior === 'tray') {
+      await invoke('hide_to_tray');
+      return;
+    }
+
+    isHandlingWindowCloseRef.current = true;
+    try {
+      await invoke('exit_application');
+    } finally {
+      isHandlingWindowCloseRef.current = false;
+    }
   };
 
   const handleSwitchAccount = async (account: StoredAccount) => {
@@ -670,6 +797,17 @@ function App() {
           void handleCloseQuickLogin();
         }}
       />
+
+      {showCloseBehaviorDialog && (
+        <CloseBehaviorDialog
+          isOpen={showCloseBehaviorDialog}
+          defaultBehavior={config.closeBehavior}
+          onClose={() => setShowCloseBehaviorDialog(false)}
+          onConfirm={(behavior, remember) => {
+            void handleApplyCloseBehavior(behavior, remember);
+          }}
+        />
+      )}
 
       <SettingsModal
         isOpen={showSettings}

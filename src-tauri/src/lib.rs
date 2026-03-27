@@ -1,3 +1,4 @@
+use chrono::{Local, TimeZone};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -9,10 +10,18 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use notify::{EventKind, RecursiveMode, Watcher};
 use reqwest::{Client, Proxy};
 use serde::{Deserialize, Serialize};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::process::{Child, Command};
 
 static USAGE_BINDINGS_LOCK: Mutex<()> = Mutex::new(());
 static LOGIN_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+static AUTO_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
+static LAST_AUTO_REFRESH_MS: Mutex<u64> = Mutex::new(0);
+const TRAY_ID: &str = "main-tray";
+const TRAY_MENU_OPEN_ID: &str = "tray-open";
+const TRAY_MENU_EXIT_ID: &str = "tray-exit";
 const MIN_VALID_EPOCH_MS: i64 = 946684800000; // 2000-01-01T00:00:00Z
 const MAX_VALID_EPOCH_MS: i64 = 4102444800000; // 2100-01-01T00:00:00Z
 const DEFAULT_LOGIN_TIMEOUT_SECONDS: u64 = 180;
@@ -61,6 +70,79 @@ fn get_account_auth_path(account_id: &str) -> Result<PathBuf, String> {
     Ok(dir.join(format!("{}.json", account_id)))
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TrayLimitSummary {
+    percent_left: f64,
+    reset_time: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TrayUsageSummary {
+    status: Option<String>,
+    message: Option<String>,
+    plan_type: Option<String>,
+    five_hour_limit: Option<TrayLimitSummary>,
+    weekly_limit: Option<TrayLimitSummary>,
+    code_review_limit: Option<TrayLimitSummary>,
+    last_updated: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TrayAccountInfo {
+    email: String,
+    plan_type: String,
+    workspace_name: Option<String>,
+    subscription_active_until: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TrayStoredAccount {
+    id: String,
+    alias: String,
+    account_info: TrayAccountInfo,
+    usage_info: Option<TrayUsageSummary>,
+    is_active: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TrayAppConfig {
+    auto_refresh_interval: Option<u64>,
+    codex_path: Option<String>,
+    close_behavior: Option<String>,
+    theme: Option<String>,
+    has_initialized: Option<bool>,
+    proxy_enabled: Option<bool>,
+    proxy_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TrayAccountsStore {
+    version: String,
+    accounts: Vec<TrayStoredAccount>,
+    config: TrayAppConfig,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TrayAccountSwitchedPayload {
+    account_id: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct BackgroundUsageRefreshedPayload {
+    updated_count: usize,
+    finished_at: String,
+}
+
 /// 加载账号存储数据
 #[tauri::command]
 fn load_accounts_store() -> Result<String, String> {
@@ -78,6 +160,421 @@ fn load_accounts_store() -> Result<String, String> {
 fn save_accounts_store(data: String) -> Result<(), String> {
     let path = get_accounts_store_path()?;
     fs::write(&path, data).map_err(|e| e.to_string())
+}
+
+fn load_accounts_store_data() -> Result<TrayAccountsStore, String> {
+    let path = get_accounts_store_path()?;
+
+    if !path.exists() {
+        return Ok(TrayAccountsStore {
+            version: "1.0.0".to_string(),
+            accounts: Vec::new(),
+            config: TrayAppConfig {
+                auto_refresh_interval: Some(30),
+                codex_path: Some("codex".to_string()),
+                close_behavior: Some("ask".to_string()),
+                theme: Some("dark".to_string()),
+                has_initialized: Some(false),
+                proxy_enabled: Some(false),
+                proxy_url: Some("http://127.0.0.1:7890".to_string()),
+            },
+        });
+    }
+
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&content).map_err(|e| e.to_string())
+}
+
+fn save_accounts_store_data(store: &TrayAccountsStore) -> Result<(), String> {
+    let data = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    save_accounts_store(data)
+}
+
+fn normalize_tray_close_behavior(value: Option<&str>) -> &'static str {
+    match value.unwrap_or_default() {
+        "exit" => "exit",
+        "tray" => "tray",
+        _ => "ask",
+    }
+}
+
+fn format_tray_percent(limit: Option<&TrayLimitSummary>, label: &str) -> String {
+    match limit {
+        Some(limit) => format!("{} {:.0}%", label, limit.percent_left),
+        None => format!("{} --", label),
+    }
+}
+
+fn format_usage_reset_time(reset_time_ms: i64, include_weekday: bool) -> Result<String, String> {
+    if reset_time_ms <= 0 {
+        return Err("Invalid reset timestamp".to_string());
+    }
+
+    let date_time = Local
+        .timestamp_millis_opt(reset_time_ms)
+        .single()
+        .ok_or_else(|| "Invalid reset timestamp".to_string())?;
+
+    if include_weekday {
+        Ok(date_time.format("%m-%d %H:%M").to_string())
+    } else {
+        Ok(date_time.format("%H:%M").to_string())
+    }
+}
+
+fn build_tray_usage_summary(result: &UsageResult) -> TrayUsageSummary {
+    let mut summary = TrayUsageSummary {
+        status: Some(result.status.clone()),
+        message: result.message.clone(),
+        plan_type: result.plan_type.clone(),
+        five_hour_limit: None,
+        weekly_limit: None,
+        code_review_limit: None,
+        last_updated: Some(now_epoch_ms_string()),
+    };
+
+    if let Some(usage) = &result.usage {
+        summary.last_updated = Some(usage.last_updated.clone());
+
+        if let Ok(reset_time) = format_usage_reset_time(usage.five_hour_reset_time_ms, false) {
+            summary.five_hour_limit = Some(TrayLimitSummary {
+                percent_left: usage.five_hour_percent_left.round(),
+                reset_time,
+            });
+        }
+
+        if let Ok(reset_time) = format_usage_reset_time(usage.weekly_reset_time_ms, true) {
+            summary.weekly_limit = Some(TrayLimitSummary {
+                percent_left: usage.weekly_percent_left.round(),
+                reset_time,
+            });
+        }
+
+        if let (Some(percent_left), Some(reset_time_ms)) = (
+            usage.code_review_percent_left,
+            usage.code_review_reset_time_ms,
+        ) {
+            if let Ok(reset_time) = format_usage_reset_time(reset_time_ms, false) {
+                summary.code_review_limit = Some(TrayLimitSummary {
+                    percent_left: percent_left.round(),
+                    reset_time,
+                });
+            }
+        }
+    }
+
+    summary
+}
+
+fn normalize_tray_text(value: Option<&str>) -> Option<String> {
+    let trimmed = value.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn format_tray_expiry(value: Option<&str>) -> String {
+    let Some(value) = normalize_tray_text(value) else {
+        return "到期 --".to_string();
+    };
+
+    if let Some((date, _)) = value.split_once('T') {
+        return format!("到期 {}", date);
+    }
+
+    if value.len() >= 10 {
+        return format!("到期 {}", &value[..10]);
+    }
+
+    format!("到期 {}", value)
+}
+
+fn build_tray_account_title(account: &TrayStoredAccount) -> String {
+    let email = normalize_tray_text(Some(&account.account_info.email))
+        .or_else(|| normalize_tray_text(Some(&account.alias)))
+        .unwrap_or_else(|| "未命名账号".to_string());
+
+    let workspace_name = normalize_tray_text(account.account_info.workspace_name.as_deref())
+        .filter(|value| value != &email);
+
+    match workspace_name {
+        Some(workspace_name) => format!("{} / {}", email, workspace_name),
+        None => email,
+    }
+}
+
+fn build_tray_account_detail(account: &TrayStoredAccount) -> String {
+    let usage = account.usage_info.as_ref();
+    let five_hour = format_tray_percent(usage.and_then(|current| current.five_hour_limit.as_ref()), "5H");
+    let weekly = format_tray_percent(usage.and_then(|current| current.weekly_limit.as_ref()), "周");
+    let code_review = format_tray_percent(
+        usage.and_then(|current| current.code_review_limit.as_ref()),
+        "审查",
+    );
+    let expiry = format_tray_expiry(account.account_info.subscription_active_until.as_deref());
+
+    format!("{}  {}  {}  {}", five_hour, weekly, code_review, expiry)
+}
+
+fn show_main_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "主窗口不存在".to_string())?;
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(())
+}
+
+fn hide_to_tray_internal<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "主窗口不存在".to_string())?;
+    window.hide().map_err(|e| e.to_string())
+}
+
+fn switch_account_from_tray<R: Runtime>(app: &AppHandle<R>, account_id: &str) -> Result<(), String> {
+    let auth_json = read_account_auth(account_id.to_string())?;
+    write_codex_auth(auth_json)?;
+
+    let mut store = load_accounts_store_data()?;
+    let mut matched = false;
+    let now = now_epoch_ms_string();
+
+    for account in store.accounts.iter_mut() {
+        let is_target = account.id == account_id;
+        if is_target {
+            matched = true;
+            account.updated_at = now.clone();
+        }
+        account.is_active = is_target;
+    }
+
+    if !matched {
+        return Err("未找到目标账号".to_string());
+    }
+
+    save_accounts_store_data(&store)?;
+    let _ = refresh_tray_menu_internal(app);
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit(
+            "tray-account-switched",
+            TrayAccountSwitchedPayload {
+                account_id: account_id.to_string(),
+            },
+        );
+    }
+
+    Ok(())
+}
+
+fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>, String> {
+    let store = load_accounts_store_data()?;
+    let menu = Menu::new(app).map_err(|e| e.to_string())?;
+
+    let open_item = MenuItem::with_id(app, TRAY_MENU_OPEN_ID, "打开主界面", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    menu.append(&open_item).map_err(|e| e.to_string())?;
+
+    let separator = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+    menu.append(&separator).map_err(|e| e.to_string())?;
+
+    if store.accounts.is_empty() {
+        let empty_item =
+            MenuItem::with_id(app, "tray-empty", "暂无账号，请先在主界面导入", false, None::<&str>)
+                .map_err(|e| e.to_string())?;
+        menu.append(&empty_item).map_err(|e| e.to_string())?;
+    } else {
+        for account in &store.accounts {
+            let account_item = CheckMenuItem::with_id(
+                app,
+                format!("account:{}", account.id),
+                build_tray_account_title(account),
+                true,
+                account.is_active,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            menu.append(&account_item).map_err(|e| e.to_string())?;
+
+            let detail_item = MenuItem::with_id(
+                app,
+                format!("account-detail:{}", account.id),
+                build_tray_account_detail(account),
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            menu.append(&detail_item).map_err(|e| e.to_string())?;
+
+            let account_separator = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+            menu.append(&account_separator).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let close_behavior_item = MenuItem::with_id(
+        app,
+        "tray-close-behavior",
+        format!(
+            "关闭按钮：{}",
+            match normalize_tray_close_behavior(store.config.close_behavior.as_deref()) {
+                "exit" => "直接退出",
+                "tray" => "最小化到托盘",
+                _ => "每次询问",
+            }
+        ),
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+    menu.append(&close_behavior_item).map_err(|e| e.to_string())?;
+
+    let exit_separator = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+    menu.append(&exit_separator).map_err(|e| e.to_string())?;
+
+    let exit_item = MenuItem::with_id(app, TRAY_MENU_EXIT_ID, "退出", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    menu.append(&exit_item).map_err(|e| e.to_string())?;
+
+    Ok(menu)
+}
+
+fn refresh_tray_menu_internal<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let tray = app
+        .tray_by_id(TRAY_ID)
+        .ok_or_else(|| "托盘图标不存在".to_string())?;
+    let menu = build_tray_menu(app)?;
+    tray.set_menu(Some(menu)).map_err(|e| e.to_string())
+}
+
+fn now_epoch_ms_u64() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn should_run_background_auto_refresh(
+    interval_minutes: u64,
+    last_refresh_ms: u64,
+    current_ms: u64,
+) -> bool {
+    if interval_minutes == 0 {
+        return false;
+    }
+
+    if last_refresh_ms == 0 {
+        return true;
+    }
+
+    let interval_ms = interval_minutes.saturating_mul(60_000);
+    current_ms.saturating_sub(last_refresh_ms) >= interval_ms
+}
+
+async fn refresh_accounts_usage_in_background<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<usize, String> {
+    let mut store = load_accounts_store_data()?;
+    if store.accounts.is_empty() {
+        return Ok(0);
+    }
+
+    let proxy_enabled = store.config.proxy_enabled;
+    let proxy_url = store.config.proxy_url.clone();
+    let mut updated_count = 0usize;
+
+    for account in store.accounts.iter_mut() {
+        let result = match get_codex_wham_usage(
+            account.id.clone(),
+            proxy_enabled,
+            proxy_url.clone(),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => UsageResult {
+                status: "error".to_string(),
+                message: Some(error),
+                plan_type: None,
+                usage: None,
+            },
+        };
+
+        if result.status == "ok" {
+            updated_count += 1;
+        }
+
+        account.usage_info = Some(build_tray_usage_summary(&result));
+    }
+
+    save_accounts_store_data(&store)?;
+    refresh_tray_menu_internal(app)?;
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit(
+            "background-usage-refreshed",
+            BackgroundUsageRefreshedPayload {
+                updated_count,
+                finished_at: now_epoch_ms_string(),
+            },
+        );
+    }
+
+    Ok(updated_count)
+}
+
+async fn maybe_run_background_auto_refresh<R: Runtime>(app: &AppHandle<R>) {
+    if AUTO_REFRESH_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let result = async {
+        let store = load_accounts_store_data()?;
+        let interval_minutes = store.config.auto_refresh_interval.unwrap_or(30);
+        if interval_minutes == 0 || store.accounts.is_empty() {
+            return Ok::<(), String>(());
+        }
+
+        let current_ms = now_epoch_ms_u64();
+        let last_refresh_ms = {
+            let guard = LAST_AUTO_REFRESH_MS
+                .lock()
+                .map_err(|_| "自动刷新状态锁不可用".to_string())?;
+            *guard
+        };
+
+        if !should_run_background_auto_refresh(interval_minutes, last_refresh_ms, current_ms) {
+            return Ok(());
+        }
+
+        refresh_accounts_usage_in_background(app).await?;
+
+        let mut guard = LAST_AUTO_REFRESH_MS
+            .lock()
+            .map_err(|_| "自动刷新状态锁不可用".to_string())?;
+        *guard = current_ms;
+        Ok(())
+    }
+    .await;
+
+    if let Err(error) = result {
+        log::warn!("后台自动刷新失败: {}", error);
+    }
+
+    AUTO_REFRESH_RUNNING.store(false, Ordering::SeqCst);
+}
+
+fn start_background_auto_refresh<R: Runtime>(app: &AppHandle<R>) {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            maybe_run_background_auto_refresh(&app_handle).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
 }
 
 /// 写入Codex auth.json
@@ -478,6 +975,70 @@ async fn start_codex_login(
 #[tauri::command]
 fn cancel_codex_login() -> Result<(), String> {
     LOGIN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+fn refresh_tray_menu(app: AppHandle) -> Result<(), String> {
+    refresh_tray_menu_internal(&app)
+}
+
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    show_main_window_internal(&app)
+}
+
+#[tauri::command]
+fn hide_to_tray(app: AppHandle) -> Result<(), String> {
+    hide_to_tray_internal(&app)
+}
+
+#[tauri::command]
+fn exit_application(app: AppHandle) -> Result<(), String> {
+    app.exit(0);
+    Ok(())
+}
+
+fn initialize_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let menu = build_tray_menu(app)?;
+    let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| {
+            let menu_id = event.id.as_ref();
+            if menu_id == TRAY_MENU_OPEN_ID {
+                let _ = show_main_window_internal(app);
+                return;
+            }
+            if menu_id == TRAY_MENU_EXIT_ID {
+                app.exit(0);
+                return;
+            }
+            if let Some(account_id) = menu_id.strip_prefix("account:") {
+                let _ = switch_account_from_tray(app, account_id);
+            }
+        })
+        .on_tray_icon_event(|tray, event| {
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } | TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                }
+            ) {
+                let _ = show_main_window_internal(tray.app_handle());
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray_builder = tray_builder.icon(icon);
+    }
+
+    tray_builder.build(app).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1612,6 +2173,8 @@ pub fn run() {
                 )?;
             }
             start_session_watcher();
+            initialize_tray(&app.handle())?;
+            start_background_auto_refresh(&app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1619,6 +2182,10 @@ pub fn run() {
             save_accounts_store,
             write_codex_auth,
             read_codex_auth,
+            refresh_tray_menu,
+            show_main_window,
+            hide_to_tray,
+            exit_application,
             start_codex_login,
             cancel_codex_login,
             save_account_auth,
@@ -1723,5 +2290,59 @@ mod tests {
         assert_eq!(invocation.program, "powershell");
         assert_eq!(invocation.mode, LoginCommandMode::PowerShell);
         assert!(invocation.args.iter().any(|arg| arg == "login"));
+    }
+
+    #[test]
+    fn tray_close_behavior_defaults_to_ask() {
+        assert_eq!(normalize_tray_close_behavior(None), "ask");
+        assert_eq!(normalize_tray_close_behavior(Some("unknown")), "ask");
+        assert_eq!(normalize_tray_close_behavior(Some("tray")), "tray");
+        assert_eq!(normalize_tray_close_behavior(Some("exit")), "exit");
+    }
+
+    #[test]
+    fn tray_account_title_includes_quota_summary() {
+        let account = TrayStoredAccount {
+            id: "1".to_string(),
+            alias: "测试账号".to_string(),
+            account_info: TrayAccountInfo {
+                email: "test@example.com".to_string(),
+                plan_type: "team".to_string(),
+                workspace_name: Some("团队空间".to_string()),
+                subscription_active_until: Some("2026-04-26T13:24:00Z".to_string()),
+            },
+            usage_info: Some(TrayUsageSummary {
+                status: Some("ok".to_string()),
+                message: None,
+                plan_type: Some("team".to_string()),
+                five_hour_limit: Some(TrayLimitSummary {
+                    percent_left: 46.0,
+                    reset_time: "0".to_string(),
+                }),
+                weekly_limit: Some(TrayLimitSummary {
+                    percent_left: 84.0,
+                    reset_time: "0".to_string(),
+                }),
+                code_review_limit: None,
+                last_updated: Some("0".to_string()),
+            }),
+            is_active: true,
+            created_at: "0".to_string(),
+            updated_at: "0".to_string(),
+        };
+
+        assert_eq!(build_tray_account_title(&account), "test@example.com / 团队空间");
+        assert_eq!(
+            build_tray_account_detail(&account),
+            "5H 46%  周 84%  审查 --  到期 2026-04-26"
+        );
+    }
+
+    #[test]
+    fn background_auto_refresh_runs_immediately_and_respects_interval() {
+        assert!(should_run_background_auto_refresh(30, 0, 1));
+        assert!(!should_run_background_auto_refresh(0, 0, 1));
+        assert!(!should_run_background_auto_refresh(30, 60_000, 1_800_000));
+        assert!(should_run_background_auto_refresh(30, 60_000, 1_900_000));
     }
 }

@@ -410,6 +410,7 @@ dependencies = [
 name = "codex-manager"
 version = "0.1.5"
 dependencies = [
+ "chrono",
  "dirs 5.0.1",
  "log",
  "notify",
