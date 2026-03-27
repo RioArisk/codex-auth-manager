@@ -69,6 +69,7 @@ export interface StoredAccount {
 export interface AppConfig {
   autoRefreshInterval: number; // 自动刷新间隔（分钟）
   codexPath: string; // Codex CLI路径
+  closeBehavior: 'ask' | 'exit' | 'tray';
   theme: 'dark' | 'light';
   hasInitialized: boolean; // 是否已尝试过首次自动同步
   proxyEnabled: boolean;

@@ -1,9 +1,11 @@
 export { AccountCard } from './AccountCard';
 export { AccountFilters } from './AccountFilters';
 export { AddAccountModal } from './AddAccountModal';
+export { CloseBehaviorDialog } from './CloseBehaviorDialog';
 export { ConfirmDialog } from './ConfirmDialog';
 export { EmptyState } from './EmptyState';
 export { Header } from './Header';
+export { QuickLoginModal } from './QuickLoginModal';
 export { SettingsModal } from './SettingsModal';
 export { StatsSummary } from './StatsSummary';
 export { UsageBar } from './UsageBar';

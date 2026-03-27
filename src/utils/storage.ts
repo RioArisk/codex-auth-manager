@@ -5,6 +5,7 @@ import { parseAccountInfo, generateId } from './jwt';
 const DEFAULT_CONFIG: AppConfig = {
   autoRefreshInterval: 30, // 30分钟
   codexPath: 'codex',
+  closeBehavior: 'ask',
   theme: 'dark',
   hasInitialized: false,
   proxyEnabled: false,

@@ -1,36 +1,70 @@
 import { useEffect, useRef, useState } from 'react';
-import { useAccountStore } from './stores/useAccountStore';
-import { useAutoRefresh } from './hooks';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import type { StoredAccount } from './types';
-import type {
-  AccountFilterState,
-  LimitFilterValue,
-  PlanFilterValue,
+import {
+  AccountCard,
+  AccountFilters,
+  AddAccountModal,
+  CloseBehaviorDialog,
+  ConfirmDialog,
+  EmptyState,
+  Header,
+  QuickLoginModal,
+  SettingsModal,
+  StatsSummary,
+  Toast,
+} from './components';
+import { useAutoRefresh } from './hooks';
+import { useAccountStore } from './stores/useAccountStore';
+import type { AppConfig, StoredAccount } from './types';
+import {
+  DEFAULT_ACCOUNT_FILTERS,
+  type AccountFilterState,
+  type LimitFilterValue,
+  type PlanFilterValue,
 } from './types/accountFilters';
+import { getAccountExpiryBucket, isAccountExpired } from './utils/accountStatus';
 import {
   exportAccountsBackup,
   importAccountsBackup,
   isMissingIdentityError,
   type AddAccountOptions,
 } from './utils/storage';
-import {
-  getAccountExpiryBucket,
-  isAccountExpired,
-} from './utils/accountStatus';
-import {
-  AccountCard,
-  AccountFilters,
-  AddAccountModal,
-  ConfirmDialog,
-  EmptyState,
-  Header,
-  SettingsModal,
-  StatsSummary,
-  Toast,
-} from './components';
-import { DEFAULT_ACCOUNT_FILTERS } from './types/accountFilters';
+
+interface StartCodexLoginResult {
+  status: 'success' | 'timeout' | 'process_error' | 'cancelled';
+  authJson?: string;
+  changedAt?: string;
+  message?: string;
+}
+
+type QuickLoginState = {
+  isOpen: boolean;
+  phase: 'starting' | 'waiting' | 'importing' | 'success' | 'error';
+  title: string;
+  message: string;
+  detail?: string | null;
+  canClose?: boolean;
+  canCancel?: boolean;
+};
+
+type TrayAccountSwitchedPayload = {
+  accountId?: string;
+};
+
+type BackgroundUsageRefreshedPayload = {
+  updatedCount?: number;
+  finishedAt?: string;
+};
+
+const formatChangedAtDetail = (changedAt?: string) => {
+  if (!changedAt) return null;
+  const value = Number(changedAt);
+  if (!Number.isFinite(value)) return changedAt;
+  return `auth 更新时间：${new Date(value).toLocaleString('zh-CN')}`;
+};
 
 function matchesLimitFilter(
   value: number | undefined,
@@ -58,11 +92,11 @@ function App() {
     setError,
     clearError,
   } = useAccountStore();
-
   const { refreshAllUsage, refreshSingleAccount, isRefreshing } = useAutoRefresh();
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [shouldInitialRefresh, setShouldInitialRefresh] = useState(false);
   const [hasLoadedAccounts, setHasLoadedAccounts] = useState(false);
@@ -70,6 +104,9 @@ function App() {
   const [filters, setFilters] = useState<AccountFilterState>(DEFAULT_ACCOUNT_FILTERS);
   const autoImportInFlightRef = useRef(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isHandlingWindowCloseRef = useRef(false);
+  const ignoreCloseRequestUntilRef = useRef(0);
+  const closeBehaviorRef = useRef<AppConfig['closeBehavior']>(config.closeBehavior);
   const [refreshingAccountId, setRefreshingAccountId] = useState<string | 'all' | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
@@ -84,8 +121,9 @@ function App() {
     isOpen: boolean;
     authJson: string;
     alias?: string;
-    source: 'manual' | 'sync' | 'auto';
+    source: 'manual' | 'sync' | 'auto' | 'quick-login';
   } | null>(null);
+  const [quickLoginState, setQuickLoginState] = useState<QuickLoginState | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -115,12 +153,8 @@ function App() {
       return;
     }
 
-    if (config.hasInitialized) {
+    if (config.hasInitialized || autoImportInFlightRef.current) {
       setIsInitializing(false);
-      return;
-    }
-
-    if (autoImportInFlightRef.current) {
       return;
     }
 
@@ -133,17 +167,16 @@ function App() {
         authJson = await invoke<string>('read_codex_auth');
         await addAccount(authJson);
         setShouldInitialRefresh(true);
-      } catch (error) {
-        if (authJson && isMissingIdentityError(error)) {
+      } catch (currentError) {
+        if (authJson && isMissingIdentityError(currentError)) {
           setIdentityConfirm({ isOpen: true, authJson, source: 'auto' });
           clearError();
         }
-        // No local auth or invalid auth; fall back to empty state.
       } finally {
         try {
           await updateConfig({ hasInitialized: true });
         } catch {
-          // Ignore config update failures for initialization.
+          // 忽略初始化状态写入失败。
         }
         setIsInitializing(false);
         autoImportInFlightRef.current = false;
@@ -155,17 +188,15 @@ function App() {
 
   useEffect(() => {
     if (!shouldInitialRefresh || accounts.length === 0) return;
-
     const targetId = accounts.find((account) => account.isActive)?.id ?? accounts[0].id;
     void refreshSingleAccount(targetId);
     setShouldInitialRefresh(false);
   }, [accounts, refreshSingleAccount, shouldInitialRefresh]);
 
   useEffect(() => {
-    if (error) {
-      const timer = setTimeout(clearError, 5000);
-      return () => clearTimeout(timer);
-    }
+    if (!error) return;
+    const timer = setTimeout(clearError, 5000);
+    return () => clearTimeout(timer);
   }, [error, clearError]);
 
   useEffect(() => {
@@ -175,6 +206,105 @@ function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    closeBehaviorRef.current = config.closeBehavior;
+  }, [config.closeBehavior]);
+
+  useEffect(() => {
+    const currentWindow = getCurrentWindow();
+    let disposed = false;
+    let unlistenWindowClose: (() => void) | null = null;
+    let unlistenTraySwitch: (() => void) | null = null;
+    let unlistenBackgroundRefresh: (() => void) | null = null;
+    let unlistenFocusChange: (() => void) | null = null;
+
+    const registerListeners = async () => {
+      unlistenWindowClose = await currentWindow.onCloseRequested(async (event) => {
+        if (Date.now() < ignoreCloseRequestUntilRef.current) {
+          event.preventDefault();
+          return;
+        }
+
+        if (isHandlingWindowCloseRef.current) {
+          return;
+        }
+
+        event.preventDefault();
+
+        const closeBehavior = closeBehaviorRef.current;
+
+        if (closeBehavior === 'tray') {
+          try {
+            ignoreCloseRequestUntilRef.current = Date.now() + 800;
+            await invoke('hide_to_tray');
+          } catch (currentError) {
+            ignoreCloseRequestUntilRef.current = 0;
+            setError(currentError instanceof Error ? currentError.message : '最小化到托盘失败');
+          }
+          return;
+        }
+
+        if (closeBehavior === 'exit') {
+          isHandlingWindowCloseRef.current = true;
+          try {
+            await invoke('exit_application');
+          } finally {
+            isHandlingWindowCloseRef.current = false;
+          }
+          return;
+        }
+
+        setShowCloseBehaviorDialog(true);
+      });
+
+      unlistenTraySwitch = await listen<TrayAccountSwitchedPayload>('tray-account-switched', async (event) => {
+        await loadAccounts();
+        const targetAccountId = event.payload?.accountId;
+        if (targetAccountId) {
+          await refreshSingleAccount(targetAccountId);
+        }
+        if (!disposed) {
+          showToast('已通过托盘切换账号', 'success');
+        }
+      });
+
+      unlistenBackgroundRefresh = await listen<BackgroundUsageRefreshedPayload>(
+        'background-usage-refreshed',
+        async () => {
+          await loadAccounts();
+        }
+      );
+
+      unlistenFocusChange = await currentWindow.onFocusChanged(async ({ payload: focused }) => {
+        if (!focused || !hasLoadedAccounts) {
+          return;
+        }
+        if (!disposed) {
+          setShowCloseBehaviorDialog(false);
+        }
+        await loadAccounts();
+      });
+    };
+
+    void registerListeners();
+
+    return () => {
+      disposed = true;
+      unlistenWindowClose?.();
+      unlistenTraySwitch?.();
+      unlistenBackgroundRefresh?.();
+      unlistenFocusChange?.();
+    };
+  }, [hasLoadedAccounts, loadAccounts, refreshSingleAccount, setError]);
+
+  useEffect(() => {
+    if (!hasLoadedAccounts) return;
+
+    void invoke('refresh_tray_menu').catch((currentError) => {
+      console.error('Failed to refresh tray menu:', currentError);
+    });
+  }, [accounts, config.closeBehavior, hasLoadedAccounts]);
 
   const showToast = (message: string, tone: 'success' | 'warning' = 'success') => {
     if (toastTimerRef.current) {
@@ -189,35 +319,171 @@ function App() {
   const handleAddAccount = async (authJson: string, alias?: string) => {
     try {
       await addAccount(authJson, alias);
-    } catch (error) {
-      if (isMissingIdentityError(error)) {
+    } catch (currentError) {
+      if (isMissingIdentityError(currentError)) {
         setIdentityConfirm({ isOpen: true, authJson, alias, source: 'manual' });
         clearError();
         return;
       }
-      throw error;
+      throw currentError;
+    }
+  };
+
+  const handleCloseQuickLogin = async () => {
+    if (!quickLoginState) return;
+
+    if (quickLoginState.canCancel) {
+      setQuickLoginState({
+        isOpen: true,
+        phase: 'waiting',
+        title: '正在取消快速登录',
+        message: '正在停止等待授权，请稍候。',
+        detail: null,
+        canClose: false,
+        canCancel: false,
+      });
+
+      try {
+        await invoke('cancel_codex_login');
+      } catch (currentError) {
+        setQuickLoginState({
+          isOpen: true,
+          phase: 'error',
+          title: '取消快速登录失败',
+          message: currentError instanceof Error ? currentError.message : '取消登录等待失败',
+          detail: null,
+          canClose: true,
+          canCancel: false,
+        });
+      }
+      return;
+    }
+
+    setQuickLoginState(null);
+  };
+
+  const handleQuickLogin = async () => {
+    setQuickLoginState({
+      isOpen: true,
+      phase: 'starting',
+      title: '快速登录并导入',
+      message: '正在启动 Codex 登录流程，请稍候。',
+      detail: config.codexPath || 'codex',
+      canClose: false,
+      canCancel: true,
+    });
+
+    try {
+      setQuickLoginState({
+        isOpen: true,
+        phase: 'waiting',
+        title: '快速登录并导入',
+        message: '已启动 Codex 登录，请在浏览器中完成授权。若不想继续，可以直接取消等待。',
+        detail: config.codexPath || 'codex',
+        canClose: false,
+        canCancel: true,
+      });
+
+      const result = await invoke<StartCodexLoginResult>('start_codex_login', {
+        codexPath: config.codexPath,
+        timeoutSeconds: 180,
+      });
+
+      if (result.status === 'cancelled') {
+        setQuickLoginState(null);
+        showToast('已取消快速登录', 'warning');
+        return;
+      }
+
+      if (result.status !== 'success' || !result.authJson) {
+        setQuickLoginState({
+          isOpen: true,
+          phase: 'error',
+          title: '快速登录失败',
+          message: result.message || '未能完成 Codex 登录。',
+          detail: formatChangedAtDetail(result.changedAt),
+          canClose: true,
+          canCancel: false,
+        });
+        return;
+      }
+
+      setQuickLoginState({
+        isOpen: true,
+        phase: 'importing',
+        title: '快速登录并导入',
+        message: '已检测到新的 auth 配置，正在导入账号并同步状态。',
+        detail: formatChangedAtDetail(result.changedAt),
+        canClose: false,
+        canCancel: false,
+      });
+
+      try {
+        await addAccount(result.authJson);
+      } catch (currentError) {
+        if (isMissingIdentityError(currentError)) {
+          setQuickLoginState(null);
+          setIdentityConfirm({ isOpen: true, authJson: result.authJson, source: 'quick-login' });
+          clearError();
+          return;
+        }
+        throw currentError;
+      }
+
+      await syncCurrentAccount();
+      setShouldInitialRefresh(true);
+
+      setQuickLoginState({
+        isOpen: true,
+        phase: 'success',
+        title: '快速登录完成',
+        message: '账号已成功导入并同步为当前登录状态。',
+        detail: formatChangedAtDetail(result.changedAt),
+        canClose: true,
+        canCancel: false,
+      });
+      showToast('快速登录并导入成功', 'success');
+    } catch (currentError) {
+      setQuickLoginState({
+        isOpen: true,
+        phase: 'error',
+        title: '快速登录失败',
+        message: currentError instanceof Error ? currentError.message : '启动 Codex 登录失败',
+        detail: config.codexPath || 'codex',
+        canClose: true,
+        canCancel: false,
+      });
     }
   };
 
   const syncCurrentCodexAccount = async (): Promise<boolean> => {
     try {
+      const previousAccountIds = new Set(
+        useAccountStore.getState().accounts.map((account) => account.id)
+      );
       const authJson = await invoke<string>('read_codex_auth');
       try {
         await addAccount(authJson);
-      } catch (error) {
-        if (isMissingIdentityError(error)) {
+      } catch (currentError) {
+        if (isMissingIdentityError(currentError)) {
           setIdentityConfirm({ isOpen: true, authJson, source: 'sync' });
           clearError();
           return false;
         }
-        throw error;
+        throw currentError;
       }
-      // 同步完成后立即更新激活状态并刷新用量
+
+      const nextAccounts = useAccountStore.getState().accounts;
+      const addedNewAccount = nextAccounts.some((account) => !previousAccountIds.has(account.id));
+
       await syncCurrentAccount();
       setShouldInitialRefresh(true);
+      if (addedNewAccount) {
+        showToast('已导入并同步当前登录账号', 'success');
+      }
       return true;
     } catch {
-      setError('未找到当前Codex配置文件。请确保已登录Codex。');
+      setError('未找到当前 Codex 配置文件，请先完成 Codex 登录。');
       return false;
     }
   };
@@ -246,8 +512,8 @@ function App() {
       const result = await importAccountsBackup(backupJson);
       await loadAccounts();
       showToast(`已导入 ${result.importedCount} 个账号`, 'success');
-    } catch (error) {
-      setError(error instanceof Error ? error.message : '导入备份失败');
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : '导入备份失败');
     }
   };
 
@@ -271,8 +537,8 @@ function App() {
         content: backupJson,
       });
       showToast('备份已导出', 'success');
-    } catch (error) {
-      setError(error instanceof Error ? error.message : '导出备份失败');
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : '导出备份失败');
     }
   };
 
@@ -280,34 +546,17 @@ function App() {
     if (!identityConfirm) return;
     const { authJson, alias, source } = identityConfirm;
     setIdentityConfirm(null);
+
     const options: AddAccountOptions = { allowMissingIdentity: true };
     try {
       await addAccount(authJson, alias, options);
-      if (source === 'auto') {
+      if (source !== 'manual') {
+        await syncCurrentAccount();
         setShouldInitialRefresh(true);
       }
-    } catch (error) {
-      setError(error instanceof Error ? error.message : '导入失败');
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : '导入失败');
     }
-  };
-
-  const handleCancelIdentityImport = () => {
-    setIdentityConfirm(null);
-  };
-
-  const handleDeleteClick = (accountId: string, accountName: string) => {
-    setDeleteConfirm({
-      isOpen: true,
-      accountId,
-      accountName,
-    });
-  };
-
-  const handleConfirmDelete = async () => {
-    if (deleteConfirm.accountId) {
-      await removeAccount(deleteConfirm.accountId);
-    }
-    setDeleteConfirm({ isOpen: false, accountId: null, accountName: '' });
   };
 
   const handleRefreshAll = async () => {
@@ -341,7 +590,7 @@ function App() {
             : result.status === 'missing-token'
               ? '缺少 access token'
               : result.status === 'no-codex-access'
-                ? 'no Codex access (plan: free)'
+                ? '当前账号没有 Codex 权限'
                 : result.status === 'no-usage'
                   ? '未找到用量信息，请稍后重试'
                   : '刷新失败');
@@ -356,6 +605,35 @@ function App() {
     await updateConfig({ proxyEnabled: !config.proxyEnabled });
   };
 
+  const handleApplyCloseBehavior = async (
+    behavior: Exclude<AppConfig['closeBehavior'], 'ask'>,
+    remember: boolean
+  ) => {
+    setShowCloseBehaviorDialog(false);
+
+    if (remember) {
+      await updateConfig({ closeBehavior: behavior });
+    }
+
+    if (behavior === 'tray') {
+      try {
+        ignoreCloseRequestUntilRef.current = Date.now() + 800;
+        await invoke('hide_to_tray');
+      } catch (currentError) {
+        ignoreCloseRequestUntilRef.current = 0;
+        setError(currentError instanceof Error ? currentError.message : '最小化到托盘失败');
+      }
+      return;
+    }
+
+    isHandlingWindowCloseRef.current = true;
+    try {
+      await invoke('exit_application');
+    } finally {
+      isHandlingWindowCloseRef.current = false;
+    }
+  };
+
   const handleSwitchAccount = async (account: StoredAccount) => {
     if (isAccountExpired(account)) {
       const synced = await syncCurrentCodexAccount();
@@ -366,6 +644,7 @@ function App() {
     }
 
     await switchToAccount(account.id);
+    showToast('账号已切换，请重启 Codex 应用以使新账号生效', 'success');
   };
 
   const availablePlanTypes: Array<Exclude<PlanFilterValue, 'all'>> = (
@@ -399,12 +678,12 @@ function App() {
 
   return (
     <>
-      {/* 主要内容区域 - 带入场动画 */}
       <div className="min-h-screen pb-12 page-enter">
         <Header
           accountCount={accounts.length}
           activeName={activeName}
           onAddAccount={() => setShowAddModal(true)}
+          onQuickLogin={handleQuickLogin}
           onReadCurrentAccount={handleSyncAccount}
           onImportBackup={handleImportBackup}
           onExportBackup={handleExportBackup}
@@ -420,7 +699,6 @@ function App() {
         </Header>
 
         <main className="max-w-7xl mx-auto px-6 py-8">
-          {/* 错误提示 */}
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm flex items-center justify-between animate-fade-in">
               <div className="flex items-center gap-2">
@@ -437,7 +715,6 @@ function App() {
             </div>
           )}
 
-          {/* 加载状态 */}
           {isInitializing && accounts.length === 0 && (
             <div className="flex items-center justify-center py-20">
               <div className="flex items-center gap-2 text-[var(--dash-text-secondary)]">
@@ -462,82 +739,103 @@ function App() {
             </div>
           )}
 
-          {/* 空状态 */}
           {hasLoadedAccounts && !isLoading && !isInitializing && accounts.length === 0 && (
-            <EmptyState onAddAccount={() => setShowAddModal(true)} />
+            <EmptyState onAddAccount={handleQuickLogin} />
           )}
 
-          {/* 有账号时显示统计和列表 */}
           {accounts.length > 0 && (
-            <>
-              <div className="dash-card p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                  <div className="flex items-center gap-3">
-                    <h2 className="text-sm font-semibold text-[var(--dash-text-primary)]">账号列表</h2>
-                    <span className="text-xs text-[var(--dash-text-muted)]">
-                      共 {accounts.length} 个
-                    </span>
-                  </div>
-                  <AccountFilters
-                    filters={filters}
-                    availablePlanTypes={availablePlanTypes}
-                    filteredCount={filteredAccounts.length}
-                    totalCount={accounts.length}
-                    onChange={(next) => setFilters((current) => ({ ...current, ...next }))}
-                    onClear={() => setFilters({ ...DEFAULT_ACCOUNT_FILTERS })}
-                  />
+            <div className="dash-card p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-sm font-semibold text-[var(--dash-text-primary)]">账号列表</h2>
+                  <span className="text-xs text-[var(--dash-text-muted)]">共 {accounts.length} 个</span>
                 </div>
-                {filteredAccounts.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-[var(--dash-border)] bg-slate-50/70 px-4 py-10 text-center">
-                    <p className="text-sm font-medium text-[var(--dash-text-primary)]">没有匹配当前筛选条件的账号</p>
-                    <p className="text-xs text-[var(--dash-text-muted)] mt-2">调整筛选条件后会立即更新列表</p>
-                    <button
-                      type="button"
-                      onClick={() => setFilters({ ...DEFAULT_ACCOUNT_FILTERS })}
-                      className="mt-4 h-9 px-4 rounded-full border border-[var(--dash-border)] bg-white text-sm text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 transition-colors"
-                    >
-                      清空筛选
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {filteredAccounts.map((account, index) => (
-                      <div
-                        key={account.id}
-                        className="animate-fade-in h-full"
-                        style={{ animationDelay: `${index * 50}ms` }}
-                      >
-                        <AccountCard
-                          account={account}
-                          onSwitch={() => handleSwitchAccount(account)}
-                          onDelete={() => handleDeleteClick(account.id, account.alias)}
-                          onRefresh={() => handleRefresh(account.id)}
-                          isRefreshing={isRefreshing}
-                          isRefreshingSelf={
-                            isRefreshing && (refreshingAccountId === account.id || refreshingAccountId === 'all')
-                          }
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <AccountFilters
+                  filters={filters}
+                  availablePlanTypes={availablePlanTypes}
+                  filteredCount={filteredAccounts.length}
+                  totalCount={accounts.length}
+                  onChange={(next) => setFilters((current) => ({ ...current, ...next }))}
+                  onClear={() => setFilters({ ...DEFAULT_ACCOUNT_FILTERS })}
+                />
               </div>
-            </>
+
+              {filteredAccounts.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-[var(--dash-border)] bg-slate-50/70 px-4 py-10 text-center">
+                  <p className="text-sm font-medium text-[var(--dash-text-primary)]">没有匹配当前筛选条件的账号</p>
+                  <p className="text-xs text-[var(--dash-text-muted)] mt-2">调整筛选条件后会立即更新列表</p>
+                  <button
+                    type="button"
+                    onClick={() => setFilters({ ...DEFAULT_ACCOUNT_FILTERS })}
+                    className="mt-4 h-9 px-4 rounded-full border border-[var(--dash-border)] bg-white text-sm text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 transition-colors"
+                  >
+                    清空筛选
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {filteredAccounts.map((account, index) => (
+                    <div
+                      key={account.id}
+                      className="animate-fade-in h-full"
+                      style={{ animationDelay: `${index * 50}ms` }}
+                    >
+                      <AccountCard
+                        account={account}
+                        onSwitch={() => handleSwitchAccount(account)}
+                        onDelete={() => setDeleteConfirm({
+                          isOpen: true,
+                          accountId: account.id,
+                          accountName: account.alias,
+                        })}
+                        onRefresh={() => handleRefresh(account.id)}
+                        isRefreshing={isRefreshing}
+                        isRefreshingSelf={
+                          isRefreshing && (refreshingAccountId === account.id || refreshingAccountId === 'all')
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </main>
       </div>
 
-      {/* 以下元素使用 fixed 定位，必须放在 page-enter 容器外面 */}
-      {/* 否则 transform 动画会创建新的包含块，导致 fixed 失效 */}
-
-      {/* 添加账号弹窗 */}
       <AddAccountModal
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)}
         onAdd={handleAddAccount}
       />
 
-      {/* 设置弹窗 */}
+      <QuickLoginModal
+        isOpen={!!quickLoginState?.isOpen}
+        phase={quickLoginState?.phase || 'starting'}
+        title={quickLoginState?.title || '快速登录并导入'}
+        message={quickLoginState?.message || ''}
+        detail={quickLoginState?.detail}
+        canClose={quickLoginState?.canClose}
+        canCancel={quickLoginState?.canCancel}
+        onClose={() => {
+          void handleCloseQuickLogin();
+        }}
+        onCancel={() => {
+          void handleCloseQuickLogin();
+        }}
+      />
+
+      {showCloseBehaviorDialog && (
+        <CloseBehaviorDialog
+          isOpen={showCloseBehaviorDialog}
+          defaultBehavior={config.closeBehavior}
+          onClose={() => setShowCloseBehaviorDialog(false)}
+          onConfirm={(behavior, remember) => {
+            void handleApplyCloseBehavior(behavior, remember);
+          }}
+        />
+      )}
+
       <SettingsModal
         isOpen={showSettings}
         config={config}
@@ -545,41 +843,42 @@ function App() {
         onSave={updateConfig}
       />
 
-      {/* 删除确认弹窗 */}
       <ConfirmDialog
         isOpen={deleteConfirm.isOpen}
         title="删除账号"
-        message={`确定要删除账号 "${deleteConfirm.accountName}" 吗？此操作无法撤销。`}
+        message={`确定要删除账号 “${deleteConfirm.accountName}” 吗？此操作无法撤销。`}
         confirmText="删除"
         cancelText="取消"
         variant="danger"
-        onConfirm={handleConfirmDelete}
+        onConfirm={async () => {
+          if (deleteConfirm.accountId) {
+            await removeAccount(deleteConfirm.accountId);
+          }
+          setDeleteConfirm({ isOpen: false, accountId: null, accountName: '' });
+        }}
         onCancel={() => setDeleteConfirm({ isOpen: false, accountId: null, accountName: '' })}
       />
 
-      {/* 身份信息缺失确认 */}
       <ConfirmDialog
         isOpen={!!identityConfirm?.isOpen}
         title="账号身份信息缺失"
-        message="未检测到有效的账号邮箱或用户ID。继续导入可能导致账号无法区分。建议检查文件后重新导入。"
+        message="未检测到有效的账号邮箱或用户 ID。继续导入可能导致账号无法区分，建议确认后再决定是否导入。"
         confirmText="继续导入"
-        cancelText="检查后重试"
+        cancelText="取消"
         variant="warning"
         onConfirm={handleConfirmIdentityImport}
-        onCancel={handleCancelIdentityImport}
+        onCancel={() => setIdentityConfirm(null)}
       />
 
-      {/* 右上角提示 - Toast */}
       {toast && (
         <div className="fixed top-6 right-6 z-50 flex flex-col items-end gap-2 pointer-events-none">
           <Toast message={toast.message} tone={toast.tone} />
         </div>
       )}
 
-      {/* 底部状态栏 */}
       <footer className="fixed bottom-0 left-0 right-0 bg-white/70 border-t border-[var(--dash-border)] py-2 px-5 backdrop-blur z-40">
         <div className="max-w-7xl mx-auto flex items-center justify-between text-xs text-[var(--dash-text-muted)]">
-          <span>Codex Manager v0.1.5</span>
+          <span>Codex Manager v0.1.6</span>
           <span>数据存储于本地</span>
         </div>
       </footer>

@@ -77,7 +77,6 @@ const buildStatusUsageInfo = (result: RustUsageResult): UsageInfo => ({
  */
 export function useAutoRefresh() {
   const { accounts, config, updateUsage, activeAccountId, syncCurrentAccount } = useAccountStore();
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const authCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isRefreshingRef = useRef(false);
   const autoRefreshAccountIdRef = useRef<string | null>(null);
@@ -228,28 +227,6 @@ export function useAutoRefresh() {
 
     void runAutoRefresh();
   }, [accounts, activeAccountId, refreshSingleAccount]);
-
-  // 设置自动刷新定时器
-  useEffect(() => {
-    if (config.autoRefreshInterval <= 0 || accounts.length === 0) {
-      return;
-    }
-
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-
-    const intervalMs = config.autoRefreshInterval * 60 * 1000;
-    intervalRef.current = setInterval(() => {
-      void refreshAllUsage();
-    }, intervalMs);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, [config.autoRefreshInterval, accounts.length, refreshAllUsage]);
 
   // 定期检测外部登录/登出操作并同步前端状态
   useEffect(() => {
