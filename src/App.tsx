@@ -105,6 +105,7 @@ function App() {
   const autoImportInFlightRef = useRef(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isHandlingWindowCloseRef = useRef(false);
+  const ignoreNextCloseRequestRef = useRef(false);
   const [refreshingAccountId, setRefreshingAccountId] = useState<string | 'all' | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
@@ -215,6 +216,12 @@ function App() {
 
     const registerListeners = async () => {
       unlistenWindowClose = await currentWindow.onCloseRequested(async (event) => {
+        if (ignoreNextCloseRequestRef.current) {
+          ignoreNextCloseRequestRef.current = false;
+          event.preventDefault();
+          return;
+        }
+
         if (isHandlingWindowCloseRef.current) {
           return;
         }
@@ -223,8 +230,10 @@ function App() {
 
         if (config.closeBehavior === 'tray') {
           try {
+            ignoreNextCloseRequestRef.current = true;
             await invoke('hide_to_tray');
           } catch (currentError) {
+            ignoreNextCloseRequestRef.current = false;
             setError(currentError instanceof Error ? currentError.message : '最小化到托盘失败');
           }
           return;
@@ -596,7 +605,13 @@ function App() {
     }
 
     if (behavior === 'tray') {
-      await invoke('hide_to_tray');
+      try {
+        ignoreNextCloseRequestRef.current = true;
+        await invoke('hide_to_tray');
+      } catch (currentError) {
+        ignoreNextCloseRequestRef.current = false;
+        setError(currentError instanceof Error ? currentError.message : '最小化到托盘失败');
+      }
       return;
     }
 
@@ -618,6 +633,7 @@ function App() {
     }
 
     await switchToAccount(account.id);
+    showToast('账号已切换，请重启 Codex 应用以使新账号生效', 'success');
   };
 
   const availablePlanTypes: Array<Exclude<PlanFilterValue, 'all'>> = (
