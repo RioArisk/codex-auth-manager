@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface HeaderProps {
   accountCount: number;
   activeName?: string;
   onAddAccount: () => void;
+  onQuickLogin: () => void;
   onReadCurrentAccount: () => void;
   onImportBackup: () => void;
   onExportBackup: () => void;
@@ -21,6 +22,7 @@ export const Header: React.FC<HeaderProps> = ({
   accountCount,
   activeName,
   onAddAccount,
+  onQuickLogin,
   onReadCurrentAccount,
   onImportBackup,
   onExportBackup,
@@ -35,23 +37,22 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
-  
+
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
     return () => clearInterval(timer);
   }, []);
-  
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('zh-CN', {
+
+  const formatTime = (date: Date) =>
+    date.toLocaleTimeString('zh-CN', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
       hour12: false,
     });
-  };
-  
+
   const formatDate = (date: Date) =>
     date.toLocaleDateString('zh-CN', {
       year: 'numeric',
@@ -64,7 +65,7 @@ export const Header: React.FC<HeaderProps> = ({
   const greeting =
     hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
   const displayName = activeName || '欢迎回来';
-  
+
   const headerBody = (
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div>
@@ -118,13 +119,13 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <div className="flex items-center">
             <button
-              onClick={onAddAccount}
+              onClick={onQuickLogin}
               className="h-10 pl-4 pr-3 rounded-l-full bg-[var(--dash-accent)] text-white text-sm font-medium transition-colors hover:brightness-110 flex items-center gap-2"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
-              添加账号
+              快速登录
             </button>
             <button
               type="button"
@@ -147,6 +148,23 @@ export const Header: React.FC<HeaderProps> = ({
           {isAddMenuOpen && (
             <div className="absolute right-0 top-full pt-2">
               <div className="w-52 rounded-2xl border border-[var(--dash-border)] bg-white/95 backdrop-blur shadow-[0_20px_50px_rgba(15,23,42,0.16)] p-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddMenuOpen(false);
+                    onAddAccount();
+                  }}
+                  disabled={isLoading}
+                  className="w-full h-10 px-3 rounded-xl text-sm text-left text-[var(--dash-text-primary)] hover:bg-slate-100 disabled:text-slate-400 disabled:hover:bg-transparent flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v4m0 8v4m8-8h-4M8 12H4m11.314-4.686l-2.828 2.828m0 3.716l2.828 2.828M8.515 8.515l2.828 2.828m0 3.314l-2.828 2.828" />
+                  </svg>
+                  手动导入 auth
+                </button>
+
+                <div className="my-1 h-px bg-[var(--dash-border)]" />
+
                 <button
                   type="button"
                   onClick={() => {

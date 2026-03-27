@@ -15,6 +15,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSave,
 }) => {
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(config.autoRefreshInterval);
+  const [codexPath, setCodexPath] = useState(config.codexPath);
   const [proxyEnabled, setProxyEnabled] = useState(config.proxyEnabled);
   const [proxyUrl, setProxyUrl] = useState(config.proxyUrl);
   const [isSaving, setIsSaving] = useState(false);
@@ -22,16 +23,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     setAutoRefreshInterval(config.autoRefreshInterval);
+    setCodexPath(config.codexPath);
     setProxyEnabled(config.proxyEnabled);
     setProxyUrl(config.proxyUrl);
-  }, [isOpen, config.autoRefreshInterval, config.proxyEnabled, config.proxyUrl]);
+  }, [isOpen, config.autoRefreshInterval, config.codexPath, config.proxyEnabled, config.proxyUrl]);
 
   if (!isOpen) return null;
 
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await onSave({ autoRefreshInterval, proxyEnabled, proxyUrl });
+      await onSave({ autoRefreshInterval, codexPath, proxyEnabled, proxyUrl });
       onClose();
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -78,6 +80,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <p className="text-xs text-[var(--dash-text-muted)] mt-2">
               设置为 0 禁用自动刷新
             </p>
+          </div>
+
+          {/* 代理设置 */}
+          <div className="pt-4 border-t border-slate-200 space-y-3">
+            <div>
+              <label className="block text-[var(--dash-text-secondary)] text-xs font-medium mb-1.5">
+                Codex CLI 路径
+              </label>
+              <input
+                type="text"
+                value={codexPath}
+                onChange={(e) => setCodexPath(e.target.value)}
+                placeholder="codex"
+                className="w-full h-10 px-3 bg-white border border-[var(--dash-border)] rounded-xl text-sm text-[var(--dash-text-primary)] placeholder-[var(--dash-text-muted)] focus:border-blue-400 outline-none transition-colors"
+              />
+              <p className="text-xs text-[var(--dash-text-muted)] mt-1">
+                快速登录时将优先使用这里配置的命令或绝对路径
+              </p>
+            </div>
           </div>
 
           {/* 代理设置 */}

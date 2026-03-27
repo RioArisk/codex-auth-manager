@@ -1,17 +1,24 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use notify::{EventKind, RecursiveMode, Watcher};
 use reqwest::{Client, Proxy};
 use serde::{Deserialize, Serialize};
+use tokio::process::{Child, Command};
 
 static USAGE_BINDINGS_LOCK: Mutex<()> = Mutex::new(());
+static LOGIN_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
 const MIN_VALID_EPOCH_MS: i64 = 946684800000; // 2000-01-01T00:00:00Z
 const MAX_VALID_EPOCH_MS: i64 = 4102444800000; // 2100-01-01T00:00:00Z
+const DEFAULT_LOGIN_TIMEOUT_SECONDS: u64 = 180;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// 获取应用数据目录
 fn get_app_data_dir() -> Result<PathBuf, String> {
@@ -151,6 +158,329 @@ fn get_home_dir() -> Result<String, String> {
         .ok_or_else(|| "Cannot find home directory".to_string())
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StartCodexLoginResult {
+    status: String,
+    auth_json: Option<String>,
+    changed_at: Option<String>,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LoginCommandMode {
+    Direct,
+    Cmd,
+    PowerShell,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoginInvocation {
+    program: String,
+    args: Vec<String>,
+    mode: LoginCommandMode,
+}
+
+#[derive(Debug, Clone)]
+struct AuthSnapshot {
+    modified: Option<SystemTime>,
+    content: Option<String>,
+}
+
+fn get_auth_snapshot(path: &Path) -> Result<AuthSnapshot, String> {
+    if !path.exists() {
+        return Ok(AuthSnapshot {
+            modified: None,
+            content: None,
+        });
+    }
+
+    let modified = fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok();
+    let content = fs::read_to_string(path).ok();
+
+    Ok(AuthSnapshot { modified, content })
+}
+
+fn auth_snapshot_changed(previous: &AuthSnapshot, current: &AuthSnapshot) -> bool {
+    if previous.modified != current.modified {
+        return true;
+    }
+    previous.content != current.content
+}
+
+fn validate_login_auth_json(auth_json: &str) -> Result<(), String> {
+    let auth: AuthConfig = serde_json::from_str(auth_json).map_err(|e| e.to_string())?;
+    let tokens = auth
+        .tokens
+        .ok_or_else(|| "auth.json 缺少 tokens 字段".to_string())?;
+
+    if tokens.id_token.as_deref().unwrap_or_default().trim().is_empty() {
+        return Err("auth.json 缺少 id_token".to_string());
+    }
+
+    Ok(())
+}
+
+fn normalize_codex_command_input(codex_path: Option<String>) -> String {
+    let value = codex_path.unwrap_or_default();
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        "codex".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[cfg(windows)]
+fn resolve_command_candidates(command: &str) -> Vec<String> {
+    if command.contains('\\') || command.contains('/') || command.contains(':') {
+        return vec![command.to_string()];
+    }
+
+    let output = std::process::Command::new("where.exe").arg(command).output();
+    let Ok(output) = output else {
+        return vec![command.to_string()];
+    };
+
+    if !output.status.success() {
+        return vec![command.to_string()];
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut candidates: Vec<String> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| line.to_string())
+        .collect();
+
+    if candidates.is_empty() {
+        candidates.push(command.to_string());
+    }
+
+    candidates
+}
+
+#[cfg(not(windows))]
+fn resolve_command_candidates(command: &str) -> Vec<String> {
+    vec![command.to_string()]
+}
+
+fn command_priority(candidate: &str) -> usize {
+    let lower = candidate.to_ascii_lowercase();
+    if lower.ends_with(".cmd") || lower.ends_with(".bat") || lower.ends_with(".com") {
+        0
+    } else if lower.ends_with(".exe") {
+        1
+    } else if lower.ends_with(".ps1") {
+        2
+    } else {
+        3
+    }
+}
+
+fn resolve_login_invocation(codex_path: Option<String>) -> Result<LoginInvocation, String> {
+    let requested = normalize_codex_command_input(codex_path);
+    let mut candidates = resolve_command_candidates(&requested);
+    candidates.sort_by_key(|candidate| command_priority(candidate));
+
+    let selected = candidates
+        .first()
+        .cloned()
+        .ok_or_else(|| "未找到可用的 codex 命令".to_string())?;
+    let selected_path = PathBuf::from(&selected);
+    let lower = selected.to_ascii_lowercase();
+
+    if lower.ends_with(".ps1") {
+        return Ok(LoginInvocation {
+            program: "powershell".to_string(),
+            args: vec![
+                "-NoLogo".to_string(),
+                "-NoProfile".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                selected,
+                "login".to_string(),
+            ],
+            mode: LoginCommandMode::PowerShell,
+        });
+    }
+
+    if lower.ends_with(".cmd") || lower.ends_with(".bat") {
+        return Ok(LoginInvocation {
+            program: "cmd".to_string(),
+            args: vec!["/C".to_string(), selected, "login".to_string()],
+            mode: LoginCommandMode::Cmd,
+        });
+    }
+
+    if selected_path.is_absolute() || selected.contains('\\') || selected.contains('/') {
+        return Ok(LoginInvocation {
+            program: selected,
+            args: vec!["login".to_string()],
+            mode: LoginCommandMode::Direct,
+        });
+    }
+
+    Ok(LoginInvocation {
+        program: selected,
+        args: vec!["login".to_string()],
+        mode: LoginCommandMode::Direct,
+    })
+}
+
+fn build_login_command(invocation: &LoginInvocation) -> Command {
+    let mut command = Command::new(&invocation.program);
+    command.args(&invocation.args);
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::null());
+    command.stderr(std::process::Stdio::null());
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    command
+}
+
+fn normalize_login_timeout_seconds(timeout_seconds: Option<u64>) -> u64 {
+    match timeout_seconds {
+        Some(0) | None => DEFAULT_LOGIN_TIMEOUT_SECONDS,
+        Some(value) => value.max(30),
+    }
+}
+
+async fn terminate_login_process(child: &mut Child) {
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = child.kill().await;
+    }
+}
+
+fn build_login_success_result(auth_json: String, changed_at: String) -> StartCodexLoginResult {
+    StartCodexLoginResult {
+        status: "success".to_string(),
+        auth_json: Some(auth_json),
+        changed_at: Some(changed_at),
+        message: None,
+    }
+}
+
+fn build_login_error_result(status: &str, message: impl Into<String>) -> StartCodexLoginResult {
+    StartCodexLoginResult {
+        status: status.to_string(),
+        auth_json: None,
+        changed_at: None,
+        message: Some(message.into()),
+    }
+}
+
+fn try_read_updated_auth(
+    auth_path: &Path,
+    baseline: &AuthSnapshot,
+) -> Result<Option<StartCodexLoginResult>, String> {
+    let current = get_auth_snapshot(auth_path)?;
+    if !auth_snapshot_changed(baseline, &current) {
+        return Ok(None);
+    }
+
+    let Some(content) = current.content else {
+        return Ok(None);
+    };
+
+    match validate_login_auth_json(&content) {
+        Ok(()) => {
+            let changed_at = current
+                .modified
+                .and_then(epoch_ms_from_system_time)
+                .map(|value| value.to_string())
+                .unwrap_or_else(now_epoch_ms_string);
+            Ok(Some(build_login_success_result(content, changed_at)))
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+#[tauri::command]
+async fn start_codex_login(
+    codex_path: Option<String>,
+    timeout_seconds: Option<u64>,
+) -> Result<StartCodexLoginResult, String> {
+    LOGIN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    let auth_path = get_codex_auth_path()?;
+    let baseline = get_auth_snapshot(&auth_path)?;
+    let invocation = resolve_login_invocation(codex_path)?;
+    let timeout = Duration::from_secs(normalize_login_timeout_seconds(timeout_seconds));
+
+    let mut child = build_login_command(&invocation)
+        .spawn()
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                format!("未找到 Codex CLI，请检查设置中的命令路径：{}", invocation.program)
+            } else {
+                format!("启动 Codex 登录失败：{}", error)
+            }
+        })?;
+
+    let started_at = Instant::now();
+    loop {
+        if LOGIN_CANCEL_REQUESTED.load(Ordering::SeqCst) {
+            terminate_login_process(&mut child).await;
+            LOGIN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+            return Ok(build_login_error_result(
+                "cancelled",
+                "已取消快速登录，停止等待授权".to_string(),
+            ));
+        }
+
+        if let Some(result) = try_read_updated_auth(&auth_path, &baseline)? {
+            terminate_login_process(&mut child).await;
+            LOGIN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+            return Ok(result);
+        }
+
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            if let Some(result) = try_read_updated_auth(&auth_path, &baseline)? {
+                LOGIN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+                return Ok(result);
+            }
+
+            let message = if status.success() {
+                "Codex 登录进程已结束，但未检测到新的 auth.json".to_string()
+            } else {
+                match status.code() {
+                    Some(code) => format!("Codex 登录进程异常结束，退出码：{}", code),
+                    None => "Codex 登录进程已被终止".to_string(),
+                }
+            };
+
+            LOGIN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+            return Ok(build_login_error_result("process_error", message));
+        }
+
+        if started_at.elapsed() >= timeout {
+            terminate_login_process(&mut child).await;
+            LOGIN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+            return Ok(build_login_error_result(
+                "timeout",
+                format!(
+                    "在 {} 秒内未检测到新的 auth.json，请完成浏览器授权后重试",
+                    timeout.as_secs()
+                ),
+            ));
+        }
+
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+    }
+}
+
+#[tauri::command]
+fn cancel_codex_login() -> Result<(), String> {
+    LOGIN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
 /// 获取用量绑定映射路径
 fn get_usage_bindings_path() -> Result<PathBuf, String> {
     let dir = get_app_data_dir()?;
@@ -248,6 +578,7 @@ fn get_latest_bound_session_path(account_id: &str) -> Result<PathBuf, String> {
 
 #[derive(Debug, Deserialize)]
 struct AuthTokens {
+    id_token: Option<String>,
     access_token: Option<String>,
     account_id: Option<String>,
 }
@@ -1288,6 +1619,8 @@ pub fn run() {
             save_accounts_store,
             write_codex_auth,
             read_codex_auth,
+            start_codex_login,
+            cancel_codex_login,
             save_account_auth,
             read_account_auth,
             delete_account_auth,
@@ -1303,4 +1636,92 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_auth_json(id_token: &str) -> String {
+        format!(
+            r#"{{
+  "OPENAI_API_KEY": null,
+  "tokens": {{
+    "id_token": "{}",
+    "access_token": "access",
+    "refresh_token": "refresh",
+    "account_id": "account"
+  }},
+  "last_refresh": "2026-03-27T00:00:00.000Z"
+}}"#,
+            id_token
+        )
+    }
+
+    #[test]
+    fn empty_codex_path_falls_back_to_default() {
+        assert_eq!(normalize_codex_command_input(None), "codex");
+        assert_eq!(
+            normalize_codex_command_input(Some("   ".to_string())),
+            "codex"
+        );
+    }
+
+    #[test]
+    fn timeout_seconds_have_reasonable_floor() {
+        assert_eq!(normalize_login_timeout_seconds(None), DEFAULT_LOGIN_TIMEOUT_SECONDS);
+        assert_eq!(normalize_login_timeout_seconds(Some(0)), DEFAULT_LOGIN_TIMEOUT_SECONDS);
+        assert_eq!(normalize_login_timeout_seconds(Some(5)), 30);
+        assert_eq!(normalize_login_timeout_seconds(Some(120)), 120);
+    }
+
+    #[test]
+    fn auth_change_detection_checks_content_and_mtime() {
+        let old = AuthSnapshot {
+            modified: None,
+            content: Some("old".to_string()),
+        };
+        let same = AuthSnapshot {
+            modified: None,
+            content: Some("old".to_string()),
+        };
+        let changed = AuthSnapshot {
+            modified: None,
+            content: Some("new".to_string()),
+        };
+
+        assert!(!auth_snapshot_changed(&old, &same));
+        assert!(auth_snapshot_changed(&old, &changed));
+    }
+
+    #[test]
+    fn login_auth_validation_requires_id_token() {
+        assert!(validate_login_auth_json(&sample_auth_json("token")).is_ok());
+        assert!(validate_login_auth_json(&sample_auth_json("")).is_err());
+        assert!(validate_login_auth_json("{\"tokens\":{}}").is_err());
+    }
+
+    #[test]
+    fn direct_invocation_is_used_for_explicit_exe_path() {
+        let invocation = resolve_login_invocation(Some(
+            r"C:\tools\codex.exe".to_string(),
+        ))
+        .expect("should build invocation");
+
+        assert_eq!(invocation.program, r"C:\tools\codex.exe");
+        assert_eq!(invocation.args, vec!["login".to_string()]);
+        assert_eq!(invocation.mode, LoginCommandMode::Direct);
+    }
+
+    #[test]
+    fn powershell_invocation_is_used_for_ps1_path() {
+        let invocation = resolve_login_invocation(Some(
+            r"C:\tools\codex.ps1".to_string(),
+        ))
+        .expect("should build invocation");
+
+        assert_eq!(invocation.program, "powershell");
+        assert_eq!(invocation.mode, LoginCommandMode::PowerShell);
+        assert!(invocation.args.iter().any(|arg| arg == "login"));
+    }
 }
