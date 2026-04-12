@@ -99,6 +99,17 @@ function buildIdentityFromAuthConfig(authConfig: CodexAuthConfig): AccountIdenti
   };
 }
 
+function areAuthConfigsEquivalent(a: CodexAuthConfig, b: CodexAuthConfig): boolean {
+  return (
+    (a.OPENAI_API_KEY ?? null) === (b.OPENAI_API_KEY ?? null) &&
+    (a.last_refresh ?? '') === (b.last_refresh ?? '') &&
+    (a.tokens?.id_token ?? '') === (b.tokens?.id_token ?? '') &&
+    (a.tokens?.access_token ?? '') === (b.tokens?.access_token ?? '') &&
+    (a.tokens?.refresh_token ?? '') === (b.tokens?.refresh_token ?? '') &&
+    (a.tokens?.account_id ?? '') === (b.tokens?.account_id ?? '')
+  );
+}
+
 function isEmptyIdentity(identity: AccountIdentity): boolean {
   return !identity.accountId && !identity.userId && !identity.email;
 }
@@ -593,9 +604,11 @@ export async function getCurrentAuthAccountId(): Promise<string | null> {
  */
 export async function syncCurrentAccount(): Promise<string | null> {
   let currentIdentity: AccountIdentity | null = null;
+  let currentAuthConfig: CodexAuthConfig | null = null;
   try {
     const authJson = await invoke<string>('read_codex_auth');
     const authConfig = JSON.parse(authJson) as CodexAuthConfig;
+    currentAuthConfig = authConfig;
     currentIdentity = buildIdentityFromAuthConfig(authConfig);
   } catch (error) {
     console.log('Failed to read current auth:', error);
@@ -676,6 +689,22 @@ export async function syncCurrentAccount(): Promise<string | null> {
   
   if (needsSave) {
     await saveAccountsStore(store);
+  }
+
+  if (matchedId && currentAuthConfig) {
+    let shouldPersistCurrentAuth = false;
+
+    try {
+      const storedAuth = await loadAccountAuth(matchedId);
+      shouldPersistCurrentAuth = !areAuthConfigsEquivalent(storedAuth, currentAuthConfig);
+    } catch (error) {
+      console.log(`Failed to read stored auth for account ${matchedId}:`, error);
+      shouldPersistCurrentAuth = true;
+    }
+
+    if (shouldPersistCurrentAuth) {
+      await saveAccountAuth(matchedId, currentAuthConfig);
+    }
   }
   
   return matchedId;

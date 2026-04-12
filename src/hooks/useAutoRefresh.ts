@@ -105,6 +105,11 @@ export function useAutoRefresh() {
     status: RefreshStatus;
   }> => {
     try {
+      // Keep the active account snapshot aligned with Codex auto-refreshed auth.json.
+      if (activeAccountId && accountId === activeAccountId) {
+        await syncCurrentAccount();
+      }
+
       const usageResult = await invoke<RustUsageResult>('get_codex_wham_usage', {
         accountId,
         proxyEnabled: config.proxyEnabled,
@@ -139,7 +144,7 @@ export function useAutoRefresh() {
         status: 'error',
       };
     }
-  }, [config.proxyEnabled, config.proxyUrl]);
+  }, [activeAccountId, config.proxyEnabled, config.proxyUrl, syncCurrentAccount]);
 
   /**
    * 刷新所有账号的用量
