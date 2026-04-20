@@ -1,0 +1,45 @@
+{
+  "user_id": "user-Pxyt****************mR1j",
+  "account_id": "user-Pxyt*********************mR1j",
+  "email": "*********@gmail.com",
+  "plan_type": "free",
+  "rate_limit": {
+    "allowed": true,
+    "limit_reached": false,
+    "primary_window": {
+      "used_percent": 0,
+      "limit_window_seconds": 604800,
+      "reset_after_seconds": 604800,
+      "reset_at": 1777128605
+    },
+    "secondary_window": null
+  },
+  "code_review_rate_limit": {
+    "allowed": true,
+    "limit_reached": false,
+    "primary_window": {
+      "used_percent": 0,
+      "limit_window_seconds": 604800,
+      "reset_after_seconds": 604800,
+      "reset_at": 1777128605
+    },
+    "secondary_window": null
+  },
+  "additional_rate_limits": null,
+  "credits": {
+    "has_credits": false,
+    "unlimited": false,
+    "overage_limit_reached": false,
+    "balance": null,
+    "approx_local_messages": null,
+    "approx_cloud_messages": null
+  },
+  "spend_control": {
+    "reached": false
+  },
+  "rate_limit_reached_type": null,
+  "promo": {
+    "campaign_id": "plus-1-month-free",
+    "message": "To continue using Codex and get access to GPT-5.3-Codex, start a free trial of Plus today (https://chatgpt.com/explore/plus)"
+  }
+}

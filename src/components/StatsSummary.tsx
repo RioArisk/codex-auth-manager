@@ -12,6 +12,9 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts, embedded =
   const accountsWithUsage = accounts.filter(
     (a) => a.usageInfo && (!a.usageInfo.status || a.usageInfo.status === 'ok')
   );
+  const accountsWithFiveHourUsage = accountsWithUsage.filter(
+    (account) => typeof account.usageInfo?.fiveHourLimit?.percentLeft === 'number'
+  );
   const activeCount = accounts.filter(a => a.isActive).length;
   
   const bestAccount = accountsWithUsage.reduce<StoredAccount | null>((best, current) => {
@@ -25,9 +28,9 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts, embedded =
     ? accountsWithUsage.reduce((sum, a) => sum + (a.usageInfo?.weeklyLimit?.percentLeft || 0), 0) / accountsWithUsage.length
     : 0;
   
-  const avgFiveHourLeft = accountsWithUsage.length > 0
-    ? accountsWithUsage.reduce((sum, a) => sum + (a.usageInfo?.fiveHourLimit?.percentLeft || 0), 0) / accountsWithUsage.length
-    : 0;
+  const avgFiveHourLeft = accountsWithFiveHourUsage.length > 0
+    ? accountsWithFiveHourUsage.reduce((sum, a) => sum + (a.usageInfo?.fiveHourLimit?.percentLeft || 0), 0) / accountsWithFiveHourUsage.length
+    : null;
   
   const planCounts = accounts.reduce((acc, a) => {
     const plan = a.accountInfo.planType;
@@ -76,14 +79,20 @@ export const StatsSummary: React.FC<StatsSummaryProps> = ({ accounts, embedded =
         <p className="text-xs uppercase tracking-[0.2em] text-[var(--dash-text-muted)]">5h 限额平均</p>
         <div className="mt-2 flex items-center gap-2">
           <p className="text-2xl font-semibold text-[var(--dash-text-primary)]">
-            {avgFiveHourLeft.toFixed(0)}%
+            {avgFiveHourLeft === null ? '--' : `${avgFiveHourLeft.toFixed(0)}%`}
           </p>
-          <span className={`dash-pill ${avgFiveHourLeft >= 50 ? 'bg-sky-50 text-sky-600' : 'bg-rose-50 text-rose-600'}`}>
-            {avgFiveHourLeft >= 50 ? '充足' : '紧张'}
+          <span className={`dash-pill ${
+            avgFiveHourLeft === null
+              ? 'bg-slate-100 text-[var(--dash-text-secondary)]'
+              : avgFiveHourLeft >= 50
+                ? 'bg-sky-50 text-sky-600'
+                : 'bg-rose-50 text-rose-600'
+          }`}>
+            {avgFiveHourLeft === null ? '暂无数据' : avgFiveHourLeft >= 50 ? '充足' : '紧张'}
           </span>
         </div>
         <p className="text-xs text-[var(--dash-text-secondary)] mt-2">
-          用于短期调用压力判断
+          {avgFiveHourLeft === null ? '仅统计存在 5h 限额的账号' : '用于短期调用压力判断'}
         </p>
       </div>
 

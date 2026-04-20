@@ -7,10 +7,10 @@ import type { UsageInfo } from '../types';
  * Rust 后端返回的用量数据结构
  */
 interface RustUsageData {
-  five_hour_percent_left: number;
-  five_hour_reset_time_ms: number;
-  weekly_percent_left: number;
-  weekly_reset_time_ms: number;
+  five_hour_percent_left?: number;
+  five_hour_reset_time_ms?: number;
+  weekly_percent_left?: number;
+  weekly_reset_time_ms?: number;
   code_review_percent_left?: number;
   code_review_reset_time_ms?: number;
   last_updated: string;
@@ -44,24 +44,39 @@ const formatResetTime = (resetTimeMs: number, includeWeekday: boolean): string =
   return `${month}-${day} ${hours}:${minutes}`;
 };
 
+const buildLimitInfo = (
+  percentLeft: number | undefined,
+  resetTimeMs: number | undefined,
+  includeWeekday: boolean
+) => {
+  if (!Number.isFinite(percentLeft) || !Number.isFinite(resetTimeMs)) {
+    return undefined;
+  }
+
+  return {
+    percentLeft: Math.round(percentLeft as number),
+    resetTime: formatResetTime(resetTimeMs as number, includeWeekday),
+  };
+};
+
 const buildUsageInfo = (usageData: RustUsageData, planType?: string): UsageInfo => ({
   status: 'ok',
   planType,
-  fiveHourLimit: {
-    percentLeft: Math.round(usageData.five_hour_percent_left),
-    resetTime: formatResetTime(usageData.five_hour_reset_time_ms, false),
-  },
-  weeklyLimit: {
-    percentLeft: Math.round(usageData.weekly_percent_left),
-    resetTime: formatResetTime(usageData.weekly_reset_time_ms, true),
-  },
-  codeReviewLimit: Number.isFinite(usageData.code_review_percent_left) &&
-    Number.isFinite(usageData.code_review_reset_time_ms)
-    ? {
-        percentLeft: Math.round(usageData.code_review_percent_left as number),
-        resetTime: formatResetTime(usageData.code_review_reset_time_ms as number, false),
-      }
-    : undefined,
+  fiveHourLimit: buildLimitInfo(
+    usageData.five_hour_percent_left,
+    usageData.five_hour_reset_time_ms,
+    false
+  ),
+  weeklyLimit: buildLimitInfo(
+    usageData.weekly_percent_left,
+    usageData.weekly_reset_time_ms,
+    true
+  ),
+  codeReviewLimit: buildLimitInfo(
+    usageData.code_review_percent_left,
+    usageData.code_review_reset_time_ms,
+    false
+  ),
   lastUpdated: usageData.last_updated,
 });
 

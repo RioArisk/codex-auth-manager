@@ -121,6 +121,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   const weeklyResetText = normalizeWeeklyReset(weeklyReset);
   const fiveHourResetText = normalizeFiveHourReset(fiveHourReset);
   const subscriptionInfo = getSubscriptionPresentation(accountInfo.subscriptionActiveUntil);
+  const showFiveHourSection = !hasUsage || !!usageInfo?.fiveHourLimit;
 
   const formatLastRefreshed = (value?: string) => {
     if (!value) return null;
@@ -226,24 +227,26 @@ export const AccountCard: React.FC<AccountCardProps> = ({
       <div className="account-card__divider" />
 
       <div className="space-y-3">
-        <div className="space-y-2">
-          <div className="flex items-baseline gap-2">
-            <span className="text-xs text-[var(--dash-text-muted)]">5h 限额</span>
-            {fiveHourResetText && (
-              <span className="text-[10px] text-[var(--dash-text-muted)]">
-                {fiveHourResetText}
+        {showFiveHourSection && (
+          <div className="space-y-2">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs text-[var(--dash-text-muted)]">5h 限额</span>
+              {fiveHourResetText && (
+                <span className="text-[10px] text-[var(--dash-text-muted)]">
+                  {fiveHourResetText}
+                </span>
+              )}
+              <span className="ml-auto text-lg font-semibold text-[var(--dash-text-primary)]">
+                {fiveHourLeft !== undefined ? `${fiveHourLeft}%` : '--'}
               </span>
+            </div>
+            {hasUsage && fiveHourLeft !== undefined ? (
+              <UsageBar label="5h 限额" showLabel={false} percentLeft={fiveHourLeft} />
+            ) : (
+              <div className="h-1.5 bg-slate-100 rounded-full" />
             )}
-            <span className="ml-auto text-lg font-semibold text-[var(--dash-text-primary)]">
-              {fiveHourLeft !== undefined ? `${fiveHourLeft}%` : '--'}
-            </span>
           </div>
-          {hasUsage ? (
-            <UsageBar label="5h 限额" showLabel={false} percentLeft={fiveHourLeft ?? 0} />
-          ) : (
-            <div className="h-1.5 bg-slate-100 rounded-full" />
-          )}
-        </div>
+        )}
 
         <div className="space-y-2">
           <div className="flex items-baseline gap-2 min-w-0 flex-nowrap">
@@ -257,8 +260,8 @@ export const AccountCard: React.FC<AccountCardProps> = ({
               {weeklyLeft !== undefined ? `${weeklyLeft}%` : '--'}
             </span>
           </div>
-          {hasUsage ? (
-            <UsageBar label="周限额" showLabel={false} percentLeft={weeklyLeft ?? 0} />
+          {hasUsage && weeklyLeft !== undefined ? (
+            <UsageBar label="周限额" showLabel={false} percentLeft={weeklyLeft} />
           ) : (
             <div className="h-1.5 bg-slate-100 rounded-full" />
           )}

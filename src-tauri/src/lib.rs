@@ -236,18 +236,26 @@ fn build_tray_usage_summary(result: &UsageResult) -> TrayUsageSummary {
     if let Some(usage) = &result.usage {
         summary.last_updated = Some(usage.last_updated.clone());
 
-        if let Ok(reset_time) = format_usage_reset_time(usage.five_hour_reset_time_ms, false) {
-            summary.five_hour_limit = Some(TrayLimitSummary {
-                percent_left: usage.five_hour_percent_left.round(),
-                reset_time,
-            });
+        if let (Some(percent_left), Some(reset_time_ms)) =
+            (usage.five_hour_percent_left, usage.five_hour_reset_time_ms)
+        {
+            if let Ok(reset_time) = format_usage_reset_time(reset_time_ms, false) {
+                summary.five_hour_limit = Some(TrayLimitSummary {
+                    percent_left: percent_left.round(),
+                    reset_time,
+                });
+            }
         }
 
-        if let Ok(reset_time) = format_usage_reset_time(usage.weekly_reset_time_ms, true) {
-            summary.weekly_limit = Some(TrayLimitSummary {
-                percent_left: usage.weekly_percent_left.round(),
-                reset_time,
-            });
+        if let (Some(percent_left), Some(reset_time_ms)) =
+            (usage.weekly_percent_left, usage.weekly_reset_time_ms)
+        {
+            if let Ok(reset_time) = format_usage_reset_time(reset_time_ms, true) {
+                summary.weekly_limit = Some(TrayLimitSummary {
+                    percent_left: percent_left.round(),
+                    reset_time,
+                });
+            }
         }
 
         if let (Some(percent_left), Some(reset_time_ms)) = (
@@ -307,21 +315,22 @@ fn build_tray_account_title(account: &TrayStoredAccount) -> String {
 
 fn build_tray_account_detail(account: &TrayStoredAccount) -> String {
     let usage = account.usage_info.as_ref();
-    let five_hour = format_tray_percent(
-        usage.and_then(|current| current.five_hour_limit.as_ref()),
-        "5H",
-    );
-    let weekly = format_tray_percent(
-        usage.and_then(|current| current.weekly_limit.as_ref()),
-        "周",
-    );
+    let mut parts = Vec::new();
+    if let Some(five_hour_limit) = usage.and_then(|current| current.five_hour_limit.as_ref()) {
+        parts.push(format_tray_percent(Some(five_hour_limit), "5H"));
+    }
+    if let Some(weekly_limit) = usage.and_then(|current| current.weekly_limit.as_ref()) {
+        parts.push(format_tray_percent(Some(weekly_limit), "周"));
+    }
     let code_review = format_tray_percent(
         usage.and_then(|current| current.code_review_limit.as_ref()),
         "审查",
     );
     let expiry = format_tray_expiry(account.account_info.subscription_active_until.as_deref());
 
-    format!("{}  {}  {}  {}", five_hour, weekly, code_review, expiry)
+    parts.push(code_review);
+    parts.push(expiry);
+    parts.join("  ")
 }
 
 fn show_main_window_internal<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
@@ -1343,10 +1352,10 @@ struct EventMsg {
 
 #[derive(Debug, Serialize)]
 pub struct UsageData {
-    pub five_hour_percent_left: f64,
-    pub five_hour_reset_time_ms: i64,
-    pub weekly_percent_left: f64,
-    pub weekly_reset_time_ms: i64,
+    pub five_hour_percent_left: Option<f64>,
+    pub five_hour_reset_time_ms: Option<i64>,
+    pub weekly_percent_left: Option<f64>,
+    pub weekly_reset_time_ms: Option<i64>,
     pub code_review_percent_left: Option<f64>,
     pub code_review_reset_time_ms: Option<i64>,
     pub last_updated: String,
@@ -1523,10 +1532,10 @@ fn parse_rate_limits_from_file(file_path: &PathBuf) -> Result<UsageData, String>
         .unwrap_or_else(now_epoch_ms_string);
 
     Ok(UsageData {
-        five_hour_percent_left: 100.0 - primary_used,
-        five_hour_reset_time_ms: five_hour_reset_ms,
-        weekly_percent_left: 100.0 - secondary_used,
-        weekly_reset_time_ms: weekly_reset_ms,
+        five_hour_percent_left: Some(100.0 - primary_used),
+        five_hour_reset_time_ms: Some(five_hour_reset_ms),
+        weekly_percent_left: Some(100.0 - secondary_used),
+        weekly_reset_time_ms: Some(weekly_reset_ms),
         code_review_percent_left: None,
         code_review_reset_time_ms: None,
         last_updated,
@@ -1577,6 +1586,12 @@ struct ParsedLimit {
     percent_left: f64,
     reset_time_ms: i64,
     window_minutes: Option<u32>,
+}
+
+#[derive(Debug, Default)]
+struct ParsedUsageLimits {
+    five_hour: Option<ParsedLimit>,
+    weekly: Option<ParsedLimit>,
 }
 
 fn json_to_f64(value: &serde_json::Value) -> Option<f64> {
@@ -1726,50 +1741,55 @@ fn detect_limit_kind(value: &serde_json::Value, window_minutes: Option<u32>) -> 
     None
 }
 
-fn parse_rate_limits(value: &serde_json::Value) -> Result<(ParsedLimit, ParsedLimit), String> {
-    if let (Some(primary), Some(secondary)) = (value.get("primary"), value.get("secondary")) {
-        let five = parse_rate_limit_entry(primary)?;
-        let weekly = parse_rate_limit_entry(secondary)?;
-        return Ok((five, weekly));
-    }
-
-    if let (Some(primary), Some(secondary)) =
-        (value.get("primary_window"), value.get("secondary_window"))
-    {
-        let five = parse_rate_limit_entry(primary)?;
-        let weekly = parse_rate_limit_entry(secondary)?;
-        return Ok((five, weekly));
-    }
-
-    let entries = value
-        .get("limits")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .or_else(|| value.as_array().cloned())
-        .ok_or_else(|| "Missing rate_limit entries".to_string())?;
-
-    let mut five: Option<ParsedLimit> = None;
-    let mut weekly: Option<ParsedLimit> = None;
-
-    for entry in entries.iter() {
-        let parsed = parse_rate_limit_entry(entry)?;
-        match detect_limit_kind(entry, parsed.window_minutes) {
-            Some(LimitKind::FiveHour) => five = Some(parsed),
-            Some(LimitKind::Weekly) => weekly = Some(parsed),
-            None => {
-                if five.is_none() {
-                    five = Some(parsed);
-                } else if weekly.is_none() {
-                    weekly = Some(parsed);
-                }
+fn assign_parsed_limit(
+    limits: &mut ParsedUsageLimits,
+    entry: &serde_json::Value,
+) -> Result<(), String> {
+    let parsed = parse_rate_limit_entry(entry)?;
+    match detect_limit_kind(entry, parsed.window_minutes) {
+        Some(LimitKind::FiveHour) => limits.five_hour = Some(parsed),
+        Some(LimitKind::Weekly) => limits.weekly = Some(parsed),
+        None => {
+            if limits.five_hour.is_none() {
+                limits.five_hour = Some(parsed);
+            } else if limits.weekly.is_none() {
+                limits.weekly = Some(parsed);
             }
         }
     }
 
-    match (five, weekly) {
-        (Some(five), Some(weekly)) => Ok((five, weekly)),
-        _ => Err("Missing primary/weekly rate_limit data".to_string()),
+    Ok(())
+}
+
+fn parse_rate_limits(value: &serde_json::Value) -> Result<ParsedUsageLimits, String> {
+    let mut limits = ParsedUsageLimits::default();
+    let mut handled_explicit_entries = false;
+
+    for key in ["primary", "secondary", "primary_window", "secondary_window"] {
+        if let Some(entry) = value.get(key).filter(|entry| !entry.is_null()) {
+            handled_explicit_entries = true;
+            assign_parsed_limit(&mut limits, entry)?;
+        }
     }
+
+    if !handled_explicit_entries {
+        let entries = value
+            .get("limits")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .or_else(|| value.as_array().cloned())
+            .ok_or_else(|| "Missing rate_limit entries".to_string())?;
+
+        for entry in entries.iter() {
+            assign_parsed_limit(&mut limits, entry)?;
+        }
+    }
+
+    if limits.five_hour.is_none() && limits.weekly.is_none() {
+        return Err("Missing usable rate_limit data".to_string());
+    }
+
+    Ok(limits)
 }
 
 fn parse_optional_rate_limit(value: &serde_json::Value) -> Option<ParsedLimit> {
@@ -2016,17 +2036,6 @@ async fn get_codex_wham_usage(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    if let Some(plan) = plan_type.as_deref() {
-        if plan == "free" {
-            return Ok(UsageResult {
-                status: "no_codex_access".to_string(),
-                message: Some(format!("no Codex access (plan: {})", plan)),
-                plan_type,
-                usage: None,
-            });
-        }
-    }
-
     let rate_limit_value = match value.get("rate_limit").or_else(|| value.get("rate_limits")) {
         Some(value) => value,
         None => {
@@ -2039,7 +2048,7 @@ async fn get_codex_wham_usage(
         }
     };
 
-    let (five_hour, weekly) = match parse_rate_limits(rate_limit_value) {
+    let parsed_limits = match parse_rate_limits(rate_limit_value) {
         Ok(parsed) => parsed,
         Err(err) => {
             return Ok(UsageResult {
@@ -2056,10 +2065,22 @@ async fn get_codex_wham_usage(
         .and_then(parse_optional_rate_limit);
 
     let usage = UsageData {
-        five_hour_percent_left: five_hour.percent_left,
-        five_hour_reset_time_ms: five_hour.reset_time_ms,
-        weekly_percent_left: weekly.percent_left,
-        weekly_reset_time_ms: weekly.reset_time_ms,
+        five_hour_percent_left: parsed_limits
+            .five_hour
+            .as_ref()
+            .map(|limit| limit.percent_left),
+        five_hour_reset_time_ms: parsed_limits
+            .five_hour
+            .as_ref()
+            .map(|limit| limit.reset_time_ms),
+        weekly_percent_left: parsed_limits
+            .weekly
+            .as_ref()
+            .map(|limit| limit.percent_left),
+        weekly_reset_time_ms: parsed_limits
+            .weekly
+            .as_ref()
+            .map(|limit| limit.reset_time_ms),
         code_review_percent_left: code_review.as_ref().map(|l| l.percent_left),
         code_review_reset_time_ms: code_review.as_ref().map(|l| l.reset_time_ms),
         last_updated: now_epoch_ms_string(),
@@ -2202,10 +2223,10 @@ fn get_account_usage(account_email: String) -> Result<UsageData, String> {
                         .unwrap_or_else(now_epoch_ms_string);
 
                     return Ok(UsageData {
-                        five_hour_percent_left: 100.0 - primary_used,
-                        five_hour_reset_time_ms: five_hour_reset_ms,
-                        weekly_percent_left: 100.0 - secondary_used,
-                        weekly_reset_time_ms: weekly_reset_ms,
+                        five_hour_percent_left: Some(100.0 - primary_used),
+                        five_hour_reset_time_ms: Some(five_hour_reset_ms),
+                        weekly_percent_left: Some(100.0 - secondary_used),
+                        weekly_reset_time_ms: Some(weekly_reset_ms),
                         code_review_percent_left: None,
                         code_review_reset_time_ms: None,
                         last_updated,
@@ -2419,6 +2440,105 @@ mod tests {
         assert_eq!(
             build_tray_account_detail(&account),
             "5H 46%  周 84%  审查 --  到期 2026-04-26"
+        );
+    }
+
+    #[test]
+    fn parse_rate_limits_supports_free_plan_weekly_only_window() {
+        let value = serde_json::json!({
+            "allowed": true,
+            "limit_reached": false,
+            "primary_window": {
+                "used_percent": 0,
+                "limit_window_seconds": 604800,
+                "reset_after_seconds": 604800,
+                "reset_at": 1777128605
+            },
+            "secondary_window": null
+        });
+
+        let parsed = parse_rate_limits(&value).expect("should parse free weekly-only usage");
+
+        assert!(parsed.five_hour.is_none());
+        assert_eq!(
+            parsed
+                .weekly
+                .as_ref()
+                .expect("weekly limit should exist")
+                .percent_left,
+            100.0
+        );
+    }
+
+    #[test]
+    fn parse_rate_limits_keeps_dual_window_behavior() {
+        let value = serde_json::json!({
+            "primary_window": {
+                "used_percent": 12,
+                "limit_window_seconds": 18000,
+                "reset_at": 1777000000
+            },
+            "secondary_window": {
+                "used_percent": 34,
+                "limit_window_seconds": 604800,
+                "reset_at": 1777600000
+            }
+        });
+
+        let parsed = parse_rate_limits(&value).expect("should parse dual window usage");
+
+        assert_eq!(
+            parsed
+                .five_hour
+                .as_ref()
+                .expect("five hour limit should exist")
+                .percent_left,
+            88.0
+        );
+        assert_eq!(
+            parsed
+                .weekly
+                .as_ref()
+                .expect("weekly limit should exist")
+                .percent_left,
+            66.0
+        );
+    }
+
+    #[test]
+    fn tray_account_detail_skips_missing_five_hour_limit() {
+        let account = TrayStoredAccount {
+            id: "1".to_string(),
+            alias: "免费账号".to_string(),
+            account_info: TrayAccountInfo {
+                email: "free@example.com".to_string(),
+                plan_type: "free".to_string(),
+                workspace_name: None,
+                subscription_active_until: None,
+            },
+            usage_info: Some(TrayUsageSummary {
+                status: Some("ok".to_string()),
+                message: None,
+                plan_type: Some("free".to_string()),
+                five_hour_limit: None,
+                weekly_limit: Some(TrayLimitSummary {
+                    percent_left: 100.0,
+                    reset_time: "04-24 10:10".to_string(),
+                }),
+                code_review_limit: Some(TrayLimitSummary {
+                    percent_left: 100.0,
+                    reset_time: "10:10".to_string(),
+                }),
+                last_updated: Some("0".to_string()),
+            }),
+            is_active: false,
+            created_at: "0".to_string(),
+            updated_at: "0".to_string(),
+        };
+
+        assert_eq!(
+            build_tray_account_detail(&account),
+            "周 100%  审查 100%  到期 --"
         );
     }
 
