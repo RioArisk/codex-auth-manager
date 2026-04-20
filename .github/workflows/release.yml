@@ -60,7 +60,7 @@ jobs:
             更新内容：
             - 新增 Free 账号用量支持：兼容仅返回周限额窗口的免费账号数据，并正确展示剩余额度
             - 调整账号卡片与统计面板：缺失 5h 限额时隐藏对应进度条并展示更准确的汇总信息
-            - 升级 Tauri 与前端依赖，并同步 npm 锁文件，恢复 GitHub Actions 构建链路
+            - 升级 Tauri 与前端依赖，保留 npm 锁文件并移除误提交的 pnpm 锁文件，恢复 GitHub Actions 构建链路
             - 合并 PR #11 by @cjy0812
             - 安装包由 GitHub Actions 自动构建并附加到当前 Release
           generateReleaseNotes: false
