@@ -57,9 +57,11 @@ jobs:
           tagName: v__VERSION__
           releaseName: Codex Manager v__VERSION__
           releaseBody: |
-            修复内容：
-            - 修复活跃账号的本地 auth 快照未随 `~/.codex/auth.json` 自动刷新，导致账号可正常使用但被误判为 “Token 已过期或无效”
-            - 刷新当前活跃账号用量前，会先同步最新登录凭证，再请求 `wham/usage`
+            更新内容：
+            - 新增 Free 账号用量支持：兼容仅返回周限额窗口的免费账号数据，并正确展示剩余额度
+            - 调整账号卡片与统计面板：缺失 5h 限额时隐藏对应进度条并展示更准确的汇总信息
+            - 升级 Tauri 与前端依赖，并同步 npm 锁文件，恢复 GitHub Actions 构建链路
+            - 合并 PR #11 by @cjy0812
             - 安装包由 GitHub Actions 自动构建并附加到当前 Release
           generateReleaseNotes: false
           releaseDraft: false
