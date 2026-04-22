@@ -40,6 +40,8 @@ const DEFAULT_CONFIG: AppConfig = {
   hasInitialized: false,
   proxyEnabled: false,
   proxyUrl: 'http://127.0.0.1:7890',
+  autoRestartCodexOnSwitch: false,
+  skipSwitchRestartConfirm: false,
 };
 
 function buildStateFromStore(store: AccountsStore) {

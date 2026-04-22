@@ -14,6 +14,7 @@ function SettingsModalContent({ config, onClose, onSave }: Omit<SettingsModalPro
   const [closeBehavior, setCloseBehavior] = useState(config.closeBehavior);
   const [proxyEnabled, setProxyEnabled] = useState(config.proxyEnabled);
   const [proxyUrl, setProxyUrl] = useState(config.proxyUrl);
+  const [autoRestartCodexOnSwitch, setAutoRestartCodexOnSwitch] = useState(config.autoRestartCodexOnSwitch);
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async () => {
@@ -28,6 +29,7 @@ function SettingsModalContent({ config, onClose, onSave }: Omit<SettingsModalPro
         closeBehavior,
         proxyEnabled,
         proxyUrl,
+        autoRestartCodexOnSwitch,
       });
       onClose();
     } catch (error) {
@@ -128,6 +130,33 @@ function SettingsModalContent({ config, onClose, onSave }: Omit<SettingsModalPro
           <div className="pt-4 border-t border-slate-200 space-y-3">
             <div className="flex items-center justify-between">
               <div>
+                <p className="text-sm text-[var(--dash-text-primary)]">{'\u5207\u6362\u8d26\u53f7\u540e\u81ea\u52a8\u91cd\u542f Codex'}</p>
+                <p className="text-xs text-[var(--dash-text-muted)] mt-1">
+                  {'\u5f00\u542f\u540e\uff0c\u5207\u6362\u8d26\u53f7\u65f6\u4f1a\u5728\u9996\u6b21\u64cd\u4f5c\u524d\u63d0\u793a\uff0c\u5e76\u91cd\u542f Codex App \u4e0e PowerShell \u7248 Codex'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAutoRestartCodexOnSwitch(!autoRestartCodexOnSwitch)}
+                className={`relative h-8 w-14 rounded-full transition-colors ${
+                  autoRestartCodexOnSwitch ? 'bg-blue-500' : 'bg-slate-200'
+                }`}
+              >
+                <span
+                  className={`absolute top-1 left-1 h-6 w-6 bg-white rounded-full shadow transition-transform ${
+                    autoRestartCodexOnSwitch ? 'translate-x-6' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+            <p className="text-xs text-[var(--dash-text-muted)]">
+              {'\u5982\u679c\u5f53\u524d\u6709\u4f1a\u8bdd\u8fdb\u884c\u4e2d\uff0c\u8bf7\u5148\u7b49\u5f85\u5b8c\u6210\uff0c\u6216\u8005\u5728\u8bbe\u7f6e\u4e2d\u5173\u95ed\u8be5\u529f\u80fd'}
+            </p>
+          </div>
+
+          <div className="pt-4 border-t border-slate-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
                 <p className="text-sm text-[var(--dash-text-primary)]">启用代理</p>
                 <p className="text-xs text-[var(--dash-text-muted)] mt-1">
                   用于访问 chatgpt.com/wham/usage
@@ -212,6 +241,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     config.closeBehavior,
     config.proxyEnabled,
     config.proxyUrl,
+    config.autoRestartCodexOnSwitch,
   ].join('|');
 
   return (

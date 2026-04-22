@@ -144,6 +144,8 @@ struct TrayAppConfig {
     has_initialized: Option<bool>,
     proxy_enabled: Option<bool>,
     proxy_url: Option<String>,
+    auto_restart_codex_on_switch: Option<bool>,
+    skip_switch_restart_confirm: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -201,6 +203,8 @@ fn load_accounts_store_data() -> Result<TrayAccountsStore, String> {
                 has_initialized: Some(false),
                 proxy_enabled: Some(false),
                 proxy_url: Some("http://127.0.0.1:7890".to_string()),
+                auto_restart_codex_on_switch: Some(false),
+                skip_switch_restart_confirm: Some(false),
             },
         });
     }
@@ -751,6 +755,178 @@ fn get_home_dir() -> Result<String, String> {
     dirs::home_dir()
         .map(|p| p.to_string_lossy().to_string())
         .ok_or_else(|| "Cannot find home directory".to_string())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RestartCodexProcessesResult {
+    app_restarted: bool,
+    cli_restarted: bool,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowsRestartCodexResult {
+    app_restarted: bool,
+    cli_restarted: bool,
+}
+
+#[cfg(windows)]
+fn escape_powershell_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+#[cfg(windows)]
+fn build_codex_cli_launch_command(codex_path: Option<String>) -> String {
+    let normalized = normalize_codex_command_input(codex_path);
+    format!("& '{}'", escape_powershell_single_quoted(&normalized))
+}
+
+#[cfg(windows)]
+fn run_windows_powershell(script: &str) -> Result<String, String> {
+    let output = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err(format!("PowerShell exited with status {}", output.status));
+        }
+        return Err(stderr);
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[cfg(windows)]
+fn restart_codex_processes_windows(
+    codex_path: Option<String>,
+) -> Result<RestartCodexProcessesResult, String> {
+    let launch_command =
+        escape_powershell_single_quoted(&build_codex_cli_launch_command(codex_path));
+
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+
+function Resolve-ExecutablePath([string]$commandLine) {{
+    if (-not $commandLine) {{
+        return $null
+    }}
+
+    if ($commandLine -match '^\s*"([^"]+)"') {{
+        return $Matches[1]
+    }}
+
+    if ($commandLine -match '^\s*([^\s]+)') {{
+        return $Matches[1]
+    }}
+
+    return $null
+}}
+
+$desktopProcesses = @(
+    Get-CimInstance Win32_Process | Where-Object {{
+        $_.CommandLine -and (
+            ($_.Name -ieq 'Codex.exe' -and $_.CommandLine -match 'OpenAI\.Codex') -or
+            ($_.Name -ieq 'codex.exe' -and $_.CommandLine -match '\\app\\resources\\codex\.exe')
+        )
+    }}
+)
+
+$desktopMain = $desktopProcesses |
+    Where-Object {{ $_.Name -ieq 'Codex.exe' -and $_.CommandLine -notmatch '--type=' }} |
+    Select-Object -First 1
+
+if (-not $desktopMain) {{
+    $desktopMain = $desktopProcesses | Select-Object -First 1
+}}
+
+$appExecutablePath = $null
+if ($desktopMain) {{
+    $appExecutablePath = $desktopMain.ExecutablePath
+    if (-not $appExecutablePath) {{
+        $appExecutablePath = Resolve-ExecutablePath $desktopMain.CommandLine
+    }}
+}}
+
+foreach ($process in $desktopProcesses) {{
+    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+}}
+
+$appRestarted = $false
+if ($desktopProcesses.Count -gt 0 -and $appExecutablePath) {{
+    Start-Sleep -Milliseconds 700
+    Start-Process -FilePath $appExecutablePath | Out-Null
+    $appRestarted = $true
+}}
+
+$cliProcesses = @(
+    Get-CimInstance Win32_Process | Where-Object {{
+        $_.CommandLine -and
+        $_.CommandLine -notmatch 'codex-auth-manager' -and
+        $_.CommandLine -notmatch 'OpenAI\.Codex' -and
+        $_.CommandLine -notmatch '\\app\\resources\\codex\.exe' -and
+        (
+            ((@('powershell.exe', 'pwsh.exe', 'cmd.exe') -contains $_.Name.ToLower()) -and $_.CommandLine -match '(^|[\s"''`])codex([\s"''`]|$)') -or
+            ((@('node.exe', 'codex.exe') -contains $_.Name.ToLower()) -and $_.CommandLine -match 'codex')
+        )
+    }}
+)
+
+foreach ($process in $cliProcesses) {{
+    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+}}
+
+$cliRestarted = $false
+if ($cliProcesses.Count -gt 0) {{
+    Start-Sleep -Milliseconds 400
+    $launchCommand = '{}'
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoExit', '-Command', $launchCommand) | Out-Null
+    $cliRestarted = $true
+}}
+
+[pscustomobject]@{{
+    appRestarted = $appRestarted
+    cliRestarted = $cliRestarted
+}} | ConvertTo-Json -Compress
+"#,
+        launch_command
+    );
+
+    let stdout = run_windows_powershell(&script)?;
+    let result: WindowsRestartCodexResult =
+        serde_json::from_str(stdout.trim()).map_err(|e| e.to_string())?;
+
+    Ok(RestartCodexProcessesResult {
+        app_restarted: result.app_restarted,
+        cli_restarted: result.cli_restarted,
+    })
+}
+
+#[tauri::command]
+fn restart_codex_processes(
+    codex_path: Option<String>,
+) -> Result<RestartCodexProcessesResult, String> {
+    #[cfg(windows)]
+    {
+        restart_codex_processes_windows(codex_path)
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = codex_path;
+        Err("Restarting Codex processes is only supported on Windows".to_string())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -2376,6 +2552,7 @@ pub fn run() {
             read_file_content,
             write_file_content,
             get_home_dir,
+            restart_codex_processes,
             get_wham_account_metadata,
             get_codex_wham_usage,
             get_usage_from_sessions,

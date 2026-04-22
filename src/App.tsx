@@ -14,6 +14,7 @@ import {
   QuickLoginModal,
   SettingsModal,
   StatsSummary,
+  SwitchRestartDialog,
   Toast,
 } from './components';
 import { useAutoRefresh } from './hooks';
@@ -26,6 +27,7 @@ import {
   type PlanFilterValue,
 } from './types/accountFilters';
 import { getAccountExpiryBucket, getSubscriptionExpirationState } from './utils/accountStatus';
+import { syncCodexProxyEnv } from './utils/codexEnv';
 import {
   exportAccountsBackup,
   importAccountsBackup,
@@ -38,6 +40,11 @@ interface StartCodexLoginResult {
   authJson?: string;
   changedAt?: string;
   message?: string;
+}
+
+interface RestartCodexProcessesResult {
+  appRestarted: boolean;
+  cliRestarted: boolean;
 }
 
 type QuickLoginState = {
@@ -124,6 +131,15 @@ function App() {
     source: 'manual' | 'sync' | 'auto' | 'quick-login';
   } | null>(null);
   const [quickLoginState, setQuickLoginState] = useState<QuickLoginState | null>(null);
+  const [isSyncingCodexProxyEnv, setIsSyncingCodexProxyEnv] = useState(false);
+  const [switchRestartConfirm, setSwitchRestartConfirm] = useState<{
+    isOpen: boolean;
+    account: StoredAccount | null;
+  }>({
+    isOpen: false,
+    account: null,
+  });
+  const [isRestartingCodex, setIsRestartingCodex] = useState(false);
 
   const showToast = useCallback((message: string, tone: 'success' | 'warning' = 'success') => {
     if (toastTimerRef.current) {
@@ -625,16 +641,73 @@ function App() {
             : result.status === 'missing-token'
               ? '缺少 access token'
               : result.status === 'stale-token'
-                ? '\u8be5\u8d26\u53f7\u7f13\u5b58\u7684 access token \u5df2\u5931\u6548\uff0c\u8bf7\u5148\u5207\u6362\u5230\u8be5\u8d26\u53f7\u5e76\u91cd\u65b0\u5b8c\u6210\u4e00\u6b21 Codex \u767b\u5f55'
-            : result.status === 'no-codex-access'
-                ? '当前账号没有 Codex 权限'
-                : result.status === 'no-usage'
-                  ? '未找到用量信息，请稍后重试'
-                  : '刷新失败');
+                ? '该账号缓存的 access token 已失效，请先切换到该账号并重新完成一次 Codex 登录'
+                : result.status === 'no-codex-access'
+                  ? '当前账号没有 Codex 权限'
+                  : result.status === 'no-usage'
+                    ? '未找到用量信息，请稍后重试'
+                    : '刷新失败');
         showToast(message, 'warning');
       }
     } finally {
       setRefreshingAccountId(null);
+    }
+  };
+
+  const handleSyncCodexProxyEnv = async () => {
+    if (isSyncingCodexProxyEnv) return;
+
+    setIsSyncingCodexProxyEnv(true);
+    try {
+      const result = await syncCodexProxyEnv({
+        proxyEnabled: config.proxyEnabled,
+        proxyUrl: config.proxyUrl,
+      });
+
+      if (result.mode === 'written') {
+        showToast('已将代理写入 Codex 环境文件', 'success');
+      } else {
+        showToast('已清理 Codex 环境文件中的代理变量', 'success');
+      }
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : '同步 Codex 代理配置失败');
+    } finally {
+      setIsSyncingCodexProxyEnv(false);
+    }
+  };
+
+  const completeAccountSwitch = async (account: StoredAccount, restartCodex: boolean) => {
+    await switchToAccount(account.id);
+
+    if (!restartCodex) {
+      showToast('账号已切换，请重启 Codex 应用以使新账号生效', 'success');
+      return;
+    }
+
+    setIsRestartingCodex(true);
+    try {
+      const result = await invoke<RestartCodexProcessesResult>('restart_codex_processes', {
+        codexPath: config.codexPath,
+      });
+
+      const restartedTargets: string[] = [];
+      if (result.appRestarted) {
+        restartedTargets.push('Codex App');
+      }
+      if (result.cliRestarted) {
+        restartedTargets.push('PowerShell 版 Codex');
+      }
+
+      if (restartedTargets.length > 0) {
+        showToast(`账号已切换，已重启 ${restartedTargets.join('、')}`, 'success');
+      } else {
+        showToast('账号已切换，未检测到正在运行的 Codex 进程', 'warning');
+      }
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : '重启 Codex 进程失败');
+      showToast('账号已切换，但自动重启 Codex 失败', 'warning');
+    } finally {
+      setIsRestartingCodex(false);
     }
   };
 
@@ -683,8 +756,32 @@ function App() {
       return;
     }
 
-    await switchToAccount(account.id);
-    showToast('账号已切换，请重启 Codex 应用以使新账号生效', 'success');
+    if (config.autoRestartCodexOnSwitch && !config.skipSwitchRestartConfirm) {
+      setSwitchRestartConfirm({ isOpen: true, account });
+      return;
+    }
+
+    await completeAccountSwitch(account, config.autoRestartCodexOnSwitch);
+  };
+
+  const handleConfirmSwitchRestart = async (rememberChoice: boolean) => {
+    const pendingAccount = switchRestartConfirm.account;
+    if (!pendingAccount) {
+      setSwitchRestartConfirm({ isOpen: false, account: null });
+      return;
+    }
+
+    setSwitchRestartConfirm({ isOpen: false, account: null });
+
+    if (rememberChoice) {
+      try {
+        await updateConfig({ skipSwitchRestartConfirm: true });
+      } catch (currentError) {
+        console.error('Failed to persist skipSwitchRestartConfirm:', currentError);
+      }
+    }
+
+    await completeAccountSwitch(pendingAccount, true);
   };
 
   const availablePlanTypes: Array<Exclude<PlanFilterValue, 'all'>> = (
@@ -728,11 +825,13 @@ function App() {
           onImportBackup={handleImportBackup}
           onExportBackup={handleExportBackup}
           onRefreshAll={handleRefreshAll}
+          onSyncCodexProxyEnv={handleSyncCodexProxyEnv}
           onOpenSettings={() => setShowSettings(true)}
           onToggleProxy={handleToggleProxy}
           isProxyEnabled={config.proxyEnabled}
           isRefreshing={isRefreshing}
           isRefreshingAll={isRefreshing && refreshingAccountId === 'all'}
+          isSyncingCodexProxyEnv={isSyncingCodexProxyEnv}
           isLoading={isLoading}
         >
           {accounts.length > 0 ? <StatsSummary accounts={accounts} embedded /> : null}
@@ -881,6 +980,15 @@ function App() {
         config={config}
         onClose={() => setShowSettings(false)}
         onSave={updateConfig}
+      />
+
+      <SwitchRestartDialog
+        isOpen={switchRestartConfirm.isOpen}
+        isSubmitting={isRestartingCodex}
+        onClose={() => setSwitchRestartConfirm({ isOpen: false, account: null })}
+        onConfirm={(rememberChoice) => {
+          void handleConfirmSwitchRestart(rememberChoice);
+        }}
       />
 
       <ConfirmDialog

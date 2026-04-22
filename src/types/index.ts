@@ -84,6 +84,8 @@ export interface AppConfig {
   hasInitialized: boolean; // 是否已尝试过首次自动同步
   proxyEnabled: boolean;
   proxyUrl: string;
+  autoRestartCodexOnSwitch: boolean;
+  skipSwitchRestartConfirm: boolean;
 }
 
 // 账号存储文件结构

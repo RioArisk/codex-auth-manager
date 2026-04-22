@@ -9,11 +9,13 @@ interface HeaderProps {
   onImportBackup: () => void;
   onExportBackup: () => void;
   onRefreshAll: () => void | Promise<void>;
+  onSyncCodexProxyEnv: () => void | Promise<void>;
   onOpenSettings: () => void;
   onToggleProxy: () => void;
   isProxyEnabled: boolean;
   isRefreshing: boolean;
   isRefreshingAll: boolean;
+  isSyncingCodexProxyEnv: boolean;
   isLoading: boolean;
   children?: React.ReactNode;
 }
@@ -27,16 +29,19 @@ export const Header: React.FC<HeaderProps> = ({
   onImportBackup,
   onExportBackup,
   onRefreshAll,
+  onSyncCodexProxyEnv,
   onOpenSettings,
   onToggleProxy,
   isProxyEnabled,
   isRefreshing,
   isRefreshingAll,
+  isSyncingCodexProxyEnv,
   isLoading,
   children,
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -80,21 +85,68 @@ export const Header: React.FC<HeaderProps> = ({
 
       <div className="flex items-center gap-3 flex-wrap justify-end">
         {accountCount > 0 && (
-          <button
-            onClick={onRefreshAll}
-            disabled={isLoading || isRefreshing}
-            className="h-10 px-3 rounded-full border border-[var(--dash-border)] text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 bg-white/70 transition-colors flex items-center gap-2 disabled:opacity-50"
-          >
-            <svg
-              className={`w-4 h-4 ${isRefreshingAll ? 'animate-spin' : ''}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+          <>
+            <button
+              onClick={onRefreshAll}
+              disabled={isLoading || isRefreshing}
+              className="h-10 px-3 rounded-full border border-[var(--dash-border)] text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 bg-white/70 transition-colors flex items-center gap-2 disabled:opacity-50"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            <span className="text-sm hidden md:inline">刷新用量</span>
-          </button>
+              <svg
+                className={`w-4 h-4 ${isRefreshingAll ? 'animate-spin' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span className="text-sm hidden md:inline">{'\u5237\u65b0\u7528\u91cf'}</span>
+            </button>
+
+            <div
+              className="relative"
+              onMouseEnter={() => setIsToolsMenuOpen(true)}
+              onMouseLeave={() => setIsToolsMenuOpen(false)}
+            >
+              <button
+                type="button"
+                onClick={() => setIsToolsMenuOpen((open) => !open)}
+                disabled={isLoading || isSyncingCodexProxyEnv}
+                className="h-10 w-10 rounded-full border border-[var(--dash-border)] text-[var(--dash-text-secondary)] hover:text-[var(--dash-text-primary)] hover:border-slate-300 bg-white/70 transition-colors flex items-center justify-center disabled:opacity-50"
+                title={'\u5de5\u5177'}
+              >
+                <svg
+                  className={`w-4 h-4 ${isSyncingCodexProxyEnv ? 'animate-spin' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317a1.724 1.724 0 013.35 0 1.724 1.724 0 002.573 1.066 1.724 1.724 0 012.898 1.675 1.724 1.724 0 001.066 2.573 1.724 1.724 0 010 3.35 1.724 1.724 0 00-1.066 2.573 1.724 1.724 0 01-2.898 1.675 1.724 1.724 0 00-2.573 1.066 1.724 1.724 0 01-3.35 0 1.724 1.724 0 00-2.573-1.066 1.724 1.724 0 01-2.898-1.675 1.724 1.724 0 00-1.066-2.573 1.724 1.724 0 010-3.35 1.724 1.724 0 001.066-2.573 1.724 1.724 0 012.898-1.675 1.724 1.724 0 002.573-1.066z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+
+              {isToolsMenuOpen && (
+                <div className="absolute right-0 top-full pt-2 z-20">
+                  <div className="w-56 rounded-2xl border border-[var(--dash-border)] bg-white/95 backdrop-blur shadow-[0_20px_50px_rgba(15,23,42,0.16)] p-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsToolsMenuOpen(false);
+                        void onSyncCodexProxyEnv();
+                      }}
+                      disabled={isSyncingCodexProxyEnv}
+                      className="w-full h-10 px-3 rounded-xl text-sm text-left text-[var(--dash-text-primary)] hover:bg-slate-100 disabled:text-slate-400 disabled:hover:bg-transparent flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h10" />
+                      </svg>
+                      <span>{isSyncingCodexProxyEnv ? '\u6b63\u5728\u540c\u6b65\u4ee3\u7406...' : '\u540c\u6b65\u4ee3\u7406\u5230 Codex'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         <button
